@@ -148,14 +148,21 @@ describe('不误伤:跟这一轮无关的面板错误照旧自己说话', () => 
     expect(descriptionOf(container)!.textContent).toBe('Could not load this conversation.');
   });
 
-  // 另一轮失败留下的面板错误也不算这一轮的 —— 判据是「同一条助手消息」,
-  // 不是「有没有来源」。
-  it('别的助手留下的运行错误也不会被当成这一轮的', () => {
+  // ⚠️ 这一条的断言在「原文永不上卡面」那次改动里**翻过面**(见
+  // `ChatPane.error-card-raw-text-never-rendered.test.tsx`)。
+  //
+  // 原来的判据是「同一条助手消息」:来源指向别的助手 → 当成跟这一轮无关的人话,
+  // 原样放行。可这个槽只有两种来源,`setRunError(err.message, …)` 那一种装的**永远
+  // 是原文** —— 别的助手留下的原文,一样是原文。上面那条(来源为空)才是当初要
+  // 保护的东西:`setError(...)` 装的是我们自己写的人话。
+  //
+  // 所以判据收敛成「有没有来源助手」:有 → 兜底句接手;没有 → 原样放行。
+  it('别的助手留下的运行原文同样由兜底句接手', () => {
     const { container } = renderChat({
       error: 'Some other run blew up.',
       errorSourceAssistantId: 'msg-someone-else',
     });
-    expect(descriptionOf(container)!.textContent).toBe('Some other run blew up.');
+    expect(descriptionOf(container)!.textContent).toBe('chat.runError.fallbackMessage');
   });
 });
 

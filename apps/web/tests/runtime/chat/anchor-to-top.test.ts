@@ -7,6 +7,7 @@ import {
   anchorScrollTop,
   anchorSpacerHeight,
   isNewTailUserTurn,
+  transcriptSpeaksForConversation,
   maxScrollTopAfterAnchorSpacer,
   type AnchorGeometry,
 } from '../../../src/runtime/chat/anchor-to-top';
@@ -137,5 +138,39 @@ describe('该不该钉顶:只认「尾条用户消息换人了」', () => {
 
   it('会话被清空不算', () => {
     expect(isNewTailUserTurn('u8', null)).toBe(false);
+  });
+});
+
+/**
+ * `null` 那一档是一句**结论**(「读完了,里面没有用户消息」),所以它只能由一份
+ * **真的读到了**的转录说出口。进项目头几拍的空转录是「还没读到」,冒充这句结论
+ * 就会把随后一次性到齐的整份历史判成新一轮 —— 钉顶接管 + 松开跟随,人停在顶上。
+ */
+describe('这份转录说不说得了这条会话的话', () => {
+  it('转录还在路上时不许说话 —— 空的不代表这条会话是空的', () => {
+    expect(
+      transcriptSpeaksForConversation({
+        activeConversationId: 'conv-1',
+        transcriptLoading: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('转录落到这条会话头上之后才算数', () => {
+    expect(
+      transcriptSpeaksForConversation({
+        activeConversationId: 'conv-1',
+        transcriptLoading: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('还没有会话可选时(新项目)空转录就是真的空', () => {
+    expect(
+      transcriptSpeaksForConversation({
+        activeConversationId: null,
+        transcriptLoading: false,
+      }),
+    ).toBe(true);
   });
 });

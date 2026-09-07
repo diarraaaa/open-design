@@ -18,8 +18,10 @@ import {
   isNewTailUserTurn,
   nextCollapsingTailSpacerHeight,
   shouldStartCollapsingTailSpacer,
+  transcriptSpeaksForConversation,
 } from '../runtime/chat/anchor-to-top';
 import { appendQuoteOutcome, type ChatQuote } from '../runtime/chat/quote-selection';
+import { railWheelDeltaPx, splitRailWheelDelta } from '../runtime/chat/rail-wheel';
 import {
   captureElementScrollAnchor,
   scrollTopForElementScrollAnchor,
@@ -134,6 +136,7 @@ import {
   formatModelWindowRetryAt,
   hasSelfContainedRecovery,
   isReconnectOwnedFailure,
+  resolveRunErrorCardDescription,
   resolveRunFailureUi,
   RUN_FAILURE_FALLBACK_MESSAGE_KEY,
 } from '../runtime/amr-guidance';
@@ -238,6 +241,17 @@ const CHAT_RAIL_MIN_USER_MESSAGES = 2;
 // at or below it the full column shows with no mask occlusion.
 const CHAT_RAIL_WHEEL_MIN_USER_MESSAGES = 40;
 const CHAT_RAIL_HIGHLIGHT_MS = 1200;
+
+/**
+ * 导轨的滚轮监听必须是**非 passive** 的原生监听,不能用 React 的 `onWheel`。
+ *
+ * React 18 把 `wheel` 一律注册成 passive,合成事件里的 `preventDefault()` 因此
+ * 是空操作(实测:调了没有任何效果,控制台也不报)。而「取消默认」正是接管滚轮的
+ * 前提 —— 导轨轨道自己 `overflow-y: auto`,不取消的话浏览器会**再**滚它一次,
+ * 和这里手写的 `scrollTop` 叠成双份位移。所以走 ref + `addEventListener`,
+ * 并显式声明 `{ passive: false }`。
+ */
+const CHAT_RAIL_WHEEL_LISTENER_OPTIONS = { passive: false } as const;
 
 // Dock-style proximity effect: every dash rests at the same base length;
 // the hovered dash grows to the full module width and only its 4 neighbors
@@ -2125,24 +2139,25 @@ export function ChatPane({
     if (!runFailureUi?.messageCauseKey) return base;
     return { ...(base ?? {}), cause: t(runFailureUi.messageCauseKey) };
   })();
-  // 卡面上只放人话。命中映射表的用它自己的文案;没命中的用兜底那一句 ——
-  // **不再把上游原文摊在卡上**(设计原则五)。卡上也不再收着它:曾经那个
-  // 「错误详情」折叠已经整块下线(用户 2026-08-27),要原始日志走〔导出日志〕。
+  // 卡面上只放人话。命中映射表的用它自己的文案;**其余一律兜底那一句** ——
+  // 上游原文永远不上卡面(设计原则五)。卡上也不再收着它:曾经那个「错误详情」
+  // 折叠已经整块下线(用户 2026-08-27),要原始日志走〔导出日志〕。
   //
-  // 兜底只接手**这一轮自己的原始报错**。两个条件缺一不可:
-  //  · `runFailureUi` —— 这条助手消息确实是终态失败,不然凭空多出一张卡;
-  //  · 面板级那条错误不是**这一轮自己填的** —— 面板错误(会话加载失败之类)本来就是
-  //    我们自己写的人话,而且优先级更高(见上面 `rawError` 的取值顺序)。少了这一条,
-  //    「一边是面板错误、一边有条失败的旧运行」时,那句人话会被兜底句顶掉。
+  // ⚠️ 这不是「把失败藏起来」。产品的原则是「UI 就是把 agent 的行为如实展示出来」:
+  // 卡照出、标题照说是哪一类失败、〔联系支持〕〔导出日志〕和这一档该给的恢复动作
+  // 一颗不少。藏的只是 **JSON-RPC 的传输信封** —— 事件 id、`sessionID`、
+  // `properties`、本机端口与项目路径 —— 那是我们自己的管道,不是用户的任务。
+  // 原文也没删:它仍然落在这条助手消息的 error 事件上,跟着诊断导出一起出去。
   //
-  //    判据不能是「面板里有没有错误」:面板那个槽是**共用**的,运行失败自己也会
-  //    往里填(`setRunError(err.message, assistantId)`,ProjectView 三处)。按
-  //    「有没有」判,这一轮自己的上游原文就正好绕过兜底,从最后那条 `: rawError`
-  //    漏到卡面上 —— 用户 2026-08-27 看到的那串 JSON-RPC 走的就是这条路。
+  // 判据是**这段字是谁写的**,不是**它落到了哪条分支**。原来那条链最后一段是
+  // 裸的 `: rawError`,只要前面两个守卫有一个不成立就摊原文 —— 而「映射表没认领」
+  // 的失败有几十种,补表补不完(用户 2026-08-27 看到的那串 JSON-RPC 走的就是这条路,
+  // 09-07 那串上游过载又走了一次)。所以改成问出处,见
+  // `resolveRunErrorCardDescription` 的不变量说明。
   //
-  //    真正的判据是**谁填的**:`setRunError` 带 `sourceAssistantId`,`setError`
-  //    一律置 null。所以「来源就是这条失败的助手消息」= 那段字是这一轮的上游原文,
-  //    该由兜底句接手;来源为空或指向别的助手,那句话跟这一轮无关,原样留着。
+  // 面板那个槽是**共用**的,所以它自己也要带出处:`setError(...)` 装的是我们写的
+  // 人话(会话加载失败之类),`setRunError(err.message, assistantId)` 装的是某一轮的
+  // 原文(ProjectView 三处)。区分靠 `errorSourceAssistantId` —— 前者一律 null。
   //
   // R9:断线是唯一一条**整张卡都不出**的 —— 流水最后一行的重连行(第 84 格 ·
   // S29)已经在说同一件事,而且给的是对的那颗按钮〔重新连接〕。两块 UI 说一件事、
@@ -2160,18 +2175,24 @@ export function ChatPane({
   const anotherSurfaceOwnsFailure =
     (runFailureUi?.suppressCard === true && !balanceCardCannotTakeTheHandoff)
     || isReconnectOwnedFailure(failedRunErrorEvent?.code, rawError);
-  // 面板里那段字是不是**这一轮自己**的上游原文。见上面兜底那两条件的说明。
-  const globalErrorIsThisRunsRawText =
-    !!currentGlobalError
-    && errorSourceAssistantId != null
-    && errorSourceAssistantId === retryAssistant?.id;
-  const displayError = anotherSurfaceOwnsFailure
-    ? null
-    : runFailureUi?.messageKey
-      ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
-      : runFailureUi && (!currentGlobalError || globalErrorIsThisRunsRawText) && rawError
-        ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
-        : rawError;
+  // 面板槽里那段字是不是某一轮跑出来的原文 —— 只看**有没有来源助手**,不看是不是
+  // 「这一轮」的。别的助手留下的原文也一样是原文,不该因为「跟这一轮无关」就原样放行。
+  const paneErrorCameFromARun = !!currentGlobalError && errorSourceAssistantId != null;
+  const cardDescription = resolveRunErrorCardDescription({
+    handedToAnotherSurface: anotherSurfaceOwnsFailure,
+    mappedMessageKey: runFailureUi?.messageKey ?? null,
+    paneError: currentGlobalError,
+    paneErrorCameFromARun,
+    failedRunRawDetail: failedRunErrorEvent?.detail ?? null,
+  });
+  const displayError =
+    cardDescription.render === 'none'
+      ? null
+      : cardDescription.render === 'mapped'
+        ? t(cardDescription.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
+        : cardDescription.render === 'fallback'
+          ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
+          : cardDescription.text;
   // Brand (accent) for AMR sign-in/top-up, warning for a self-healing
   // connection drop, danger for everything else. The shared action card only
   // tints its icon; the surface itself stays neutral.
@@ -2621,8 +2642,29 @@ export function ChatPane({
     const lastUser = tailRenderedUserMessage(chatRenderItems);
     const tailUserId = lastUser?.id ?? null;
     const settledTailUserId = settledTailUserIdRef.current;
-    settledTailUserIdRef.current = tailUserId;
-    if (isNewTailUserTurn(settledTailUserId, tailUserId)) {
+    /*
+     * 【不变量】**没读到的转录没有表决权,也不许落定。**
+     *
+     * 打开一个项目时,`ProjectView` 会话 id 一到手就挂 `ChatPane`,转录还要再等
+     * 两拍以上才回来 —— 那几拍 `chatRenderItems` 是空的,但那是「还没读到」,
+     * 不是「读完了是空的」。老写法照样把这个空落定了下去(`tailUserId` 为 `null`),
+     * 而 `null` 在 `isNewTailUserTurn` 里是一句结论:「这条会话没有用户消息」。
+     * 于是转录一到齐,整份历史就被判成用户刚发的新一轮 —— 钉顶接管、
+     * `releaseFollow()`,人再也回不到底部,画面停在钉顶那一帧量出来的落点上。
+     * 详见 `transcriptSpeaksForConversation`。
+     *
+     * 表决和落定用**同一把**闸:只落定不表决,读取中途真发出去的一轮会在
+     * `loading` 清掉之前每次重渲都重新接管一次(它的 `settledTailUserId` 一直是旧值)。
+     */
+    const transcriptSpeaksForThisConversation = transcriptSpeaksForConversation({
+      activeConversationId,
+      transcriptLoading: loading,
+    });
+    if (transcriptSpeaksForThisConversation) settledTailUserIdRef.current = tailUserId;
+    if (
+      transcriptSpeaksForThisConversation
+      && isNewTailUserTurn(settledTailUserId, tailUserId)
+    ) {
       resetTailSpacer();
       anchorActiveRef.current = true;
       /*
@@ -2688,7 +2730,10 @@ export function ChatPane({
       writeLogScrollTop(el, el.scrollHeight);
     }
     syncFollowState();
-  }, [chatRenderItems, displayMessages, error, streaming]);
+    // `activeConversationId` / `loading` 在依赖里,是因为「这份转录说不说得了话」
+    // 由它们两个决定(见上面那条不变量):读完的那一拍必须重新走一次这个 effect,
+    // 否则贴底那一下要等下一次内容变化才补上。
+  }, [activeConversationId, chatRenderItems, displayMessages, error, loading, streaming]);
 
   // Saved chat-log scroll state, preserved across tab switches. The
   // chat-log <div> is conditionally rendered so it unmounts when the
@@ -4771,7 +4816,102 @@ function ChatMessageRail({
     };
   }, [logRef, userMessages]);
 
-  if (loading || userMessages.length < CHAT_RAIL_MIN_USER_MESSAGES) {
+  const railVisible = !loading && userMessages.length >= CHAT_RAIL_MIN_USER_MESSAGES;
+
+  /**
+   * 导轨消化不掉的滚轮,交给底下的聊天记录。
+   *
+   * ── 为什么需要一条代码 ────────────────────────────────────────────────
+   * 这个 `<nav>` 是绝对定位、20px 宽、**整个 log viewport 高**的覆盖层
+   * (`chat.css`)。它是 `.chat-log` 的**兄弟节点** —— 两者叠在
+   * `.chat-log-viewport` 的同一个 grid cell 里 —— 而 Chromium 沿**祖先链**找
+   * 滚动容器,聊天记录从来不在导轨的那条链上;往上找到的
+   * `.chat-log-viewport` / `.chat-log-wrap` / `.pane` 一个都不接受滚轮。
+   * 于是指针落在导轨上时,滚轮对聊天记录**上下两个方向都死**,而
+   * `.chat-log` 又故意没有滚动条(导轨就是它的替代品),屏幕上没有任何线索。
+   *
+   * 顺带记一句已经反证掉的方向:轨道上的 `overscroll-behavior: contain`
+   * **不是**原因 —— 改成 `auto`、把轨道滚到底再发滚轮,日志照样不动。
+   * scroll chaining 只往祖先传,而 log 不是祖先。摘掉它不构成修复。
+   *
+   * ── 判据 ────────────────────────────────────────────────────────────
+   * 见 `splitRailWheelDelta`:轨道在这个方向还有余量就先给轨道(长会话里
+   * 那一列短横自己会滚,指针停在上面时用户多半想拨的就是它),吃不下的
+   * 余量 —— 轨道不可滚 / 已到底 / 只吃得下一部分 —— 全部转给聊天记录。
+   *
+   * ── 为什么是原生监听 ─────────────────────────────────────────────────
+   * 见 `CHAT_RAIL_WHEEL_LISTENER_OPTIONS`:React 的 `onWheel` 是 passive,
+   * 里面的 `preventDefault()` 不生效,轨道会被浏览器再滚一次。
+   *
+   * 这条同时接手了原来挂在 `onWheel` 上的那件事(指针落在 nav 的空白段 ——
+   * 轨道之外 —— 时手动拨轨道):现在无论指针落在 nav 的哪一处,账都一样算。
+   */
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!railVisible || !nav) return;
+    const onWheel = (ev: WheelEvent) => {
+      // ctrl/⌘ + 滚轮是缩放不是滚动;吃掉它等于把浏览器缩放从用户手里拿走。
+      if (ev.ctrlKey || ev.metaKey) return;
+      const log = logRef.current;
+      const track = trackRef.current;
+      const deltaPx = railWheelDeltaPx(ev.deltaY, ev.deltaMode, log?.clientHeight ?? 0);
+      const split = splitRailWheelDelta(
+        deltaPx,
+        track
+          ? {
+              scrollTop: track.scrollTop,
+              scrollHeight: track.scrollHeight,
+              clientHeight: track.clientHeight,
+            }
+          : null,
+      );
+      const trackStep = track ? split.track : 0;
+      const logStep = log ? split.log : 0;
+      // 什么都写不动就把滚轮原样还给浏览器 —— 接管而不作为等于白吞一次输入。
+      if (trackStep === 0 && logStep === 0) return;
+      ev.preventDefault();
+      if (track && trackStep !== 0) track.scrollTop += trackStep;
+      if (log && logStep !== 0) log.scrollTop += logStep;
+    };
+    nav.addEventListener('wheel', onWheel, CHAT_RAIL_WHEEL_LISTENER_OPTIONS);
+    return () => nav.removeEventListener('wheel', onWheel);
+  }, [logRef, railVisible]);
+
+  /**
+   * 退避态的解除不能只靠 nav 自己的 `mouseleave`。
+   *
+   * 隐形的东西不该继续吃输入,所以 `.is-retracted` 现在连 `pointer-events`
+   * 一起关掉(`chat.css`)。可 `mouseleave` 的前提是这个元素还在命中测试里 ——
+   * 一个刚被设成 `pointer-events: none` 的元素会不会补发一次 `mouseleave`,
+   * 规范没有要求,各浏览器实现也不一致。赌输了 `retracted` 就永远解不掉,
+   * 导轨从此再也不亮,比原来的缺陷更糟。
+   *
+   * 所以解除条件自己拿:退避期间在 document 上听指针移动,指针一旦离开导轨的
+   * 矩形就解除 —— 和 `mouseleave` 同一个语义,但不依赖导轨能不能被命中。
+   * `onMouseLeave` 一并保留:指针在样式落下之前就滑出去时它更早一步,而且它
+   * 顺手清 `preview`。
+   */
+  useEffect(() => {
+    if (!retracted) return;
+    const release = (ev: MouseEvent) => {
+      const nav = navRef.current;
+      if (!nav) {
+        setRetracted(false);
+        return;
+      }
+      const rect = nav.getBoundingClientRect();
+      const inside =
+        ev.clientX >= rect.left
+        && ev.clientX <= rect.right
+        && ev.clientY >= rect.top
+        && ev.clientY <= rect.bottom;
+      if (!inside) setRetracted(false);
+    };
+    document.addEventListener('pointermove', release, { passive: true });
+    return () => document.removeEventListener('pointermove', release);
+  }, [retracted]);
+
+  if (!railVisible) {
     return null;
   }
 
@@ -4783,6 +4923,9 @@ function ChatMessageRail({
       : -1;
 
   return (
+    /* 这里没有 `onWheel` —— React 把它注册成 passive,里面的 `preventDefault()`
+       不生效,轨道会被浏览器再滚一次。滚轮走上面那条 `useEffect` 里的原生
+       非 passive 监听,见 `CHAT_RAIL_WHEEL_LISTENER_OPTIONS`。 */
     <nav
       ref={navRef}
       className={`chat-message-rail${retracted ? ' is-retracted' : ''}`}
@@ -4790,13 +4933,6 @@ function ChatMessageRail({
       onMouseLeave={() => {
         setPreview(null);
         setRetracted(false);
-      }}
-      onWheel={(ev) => {
-        // The nav is a full-height hit zone; wheeling over its empty parts
-        // (outside the track, which scrolls natively) still rolls the wheel.
-        const track = trackRef.current;
-        if (!track || track.contains(ev.target as Node)) return;
-        track.scrollTop += ev.deltaY;
       }}
       data-wheel={userMessages.length > CHAT_RAIL_WHEEL_MIN_USER_MESSAGES ? 'true' : 'false'}
       data-testid="chat-message-rail"

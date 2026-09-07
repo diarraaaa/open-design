@@ -214,3 +214,33 @@ export function isNewTailUserTurn(
   if (tailUserId === null) return false;
   return tailUserId !== settledTailUserId;
 }
+
+/**
+ * 这一拍的转录**能不能替这条会话说话** —— `isNewTailUserTurn` 的表决资格。
+ *
+ * 上面那三档语义里,`null` 是一句**结论**:「这条会话我看过了,里面没有用户消息」。
+ * 而打开一个项目的头几拍恰恰给不出这个结论:`ProjectView` 在会话 id 一到手就挂
+ * `ChatPane`,转录还在路上 —— 那几拍 `messages` 是空的,但那是「还没读到」,
+ * 不是「读完了是空的」。把那个空当成结论落定成 `null`,转录一次性到齐的下一拍,
+ * `isNewTailUserTurn(null, 尾条id)` 就是 `true`:**一份刚读进来的旧转录被当成
+ * 用户刚发的新一轮**,于是钉顶接管 + `releaseFollow()`,人再也回不到底部。
+ * 落点是钉顶那一帧现量的 —— 排完版就停在最后一条用户消息上(最后那轮回复短的
+ * 时候看着像贴底,所以「有时候是好的」),没排完就量成 0,停在最顶上。
+ *
+ * 判据用宿主给的 `loading`,不用 `messages.length`。同一条规矩
+ * `conversationMessageCount` 已经写过一遍:转录没落到这条会话头上时
+ * (`messagesConversationId !== activeConversationId`,也就是 `loading`),
+ * `messages.length` 不作数 —— 那边的症状是会话列表里的幻影「0 msg」,
+ * 这里是进会话停在顶上,同一个错误的两个出口。
+ *
+ * 没有会话可选时(新项目还没开第一条)返回 `true`:那时没有东西要读,空转录
+ * 就是真的空,首页发起的第一条消息仍然该钉顶。宿主不跟踪 `loading` 的挂载点
+ * (默认 `false`)行为和以前完全一致。
+ */
+export function transcriptSpeaksForConversation(input: {
+  activeConversationId: string | null;
+  transcriptLoading: boolean;
+}): boolean {
+  if (input.activeConversationId === null) return true;
+  return !input.transcriptLoading;
+}

@@ -347,11 +347,85 @@ export type RunFailureCauseKey =
  * Before this existed the card rendered `rawError` — the upstream string, in
  * English, sometimes a slab of stderr — straight onto the card face, which is
  * design principle 5 ("say it in plain words") inverted. The raw text is still
- * reachable: it stays in the collapsible diagnostic area, which is where the
- * engineering-facing copy belongs.
+ * reachable, just not on the card: it is persisted on the assistant message's
+ * error event and travels out through 〔Export logs〕 (`/api/diagnostics/export`),
+ * which is where the engineering-facing copy belongs. (The card's own
+ * collapsible diagnostic area was removed on 2026-08-27.)
  */
 export const RUN_FAILURE_FALLBACK_MESSAGE_KEY =
   'chat.runError.fallbackMessage' as const;
+
+/** What the failure card's description slot renders. */
+export type RunErrorCardDescription =
+  /** No card — another surface already owns this story. */
+  | { render: 'none' }
+  /** This failure's own mapped copy (interpolated by the caller). */
+  | { render: 'mapped'; messageKey: NonNullable<RunFailureMessageKey> }
+  /** RUN_FAILURE_FALLBACK_MESSAGE_KEY — nothing we can say more precisely. */
+  | { render: 'fallback' }
+  /** Copy this app wrote into the shared pane slot; safe to render verbatim. */
+  | { render: 'app-text'; text: string };
+
+/**
+ * What the failure card says, decided by the PROVENANCE of the text rather than
+ * by which branch of the ladder the failure fell through.
+ *
+ * **Invariant: the card face only ever renders words this app wrote.** Anything
+ * that came back from a run — the daemon's `message`, the agent's stderr, an
+ * ACP JSON-RPC envelope — resolves to `{ render: 'fallback' }`, no matter how
+ * it reached the card.
+ *
+ * This is deliberately NOT "hide the failure". The product principle is that
+ * the UI shows the agent's behavior as it actually is: the card still appears,
+ * still names the failure type, still carries 〔Contact support〕〔Export logs〕
+ * and whatever recovery action the rung provides. What is withheld is the
+ * TRANSPORT ENVELOPE — event ids, `sessionID`, `properties`, local ports and
+ * filesystem paths — which describes our plumbing, not the user's task. The raw
+ * text is not deleted either: it stays on the assistant message's persisted
+ * error event and leaves through the diagnostics export.
+ *
+ * Why provenance and not a branch guard: the previous shape ended in a bare
+ * `: rawError` tail, reached whenever the two guards in front of it did not
+ * both hold. Every failure the mapping table does not claim — and there are
+ * dozens — was one guard away from spilling. A lookup table can always be one
+ * row short; this predicate cannot.
+ *
+ * The pane slot (`error`) is shared, which is why it needs a provenance flag of
+ * its own: `setError(...)` fills it with copy this app wrote (a conversation
+ * that would not load), while `setRunError(message, assistantId)` fills it with
+ * a run's raw message. Only the former may be rendered verbatim, and the caller
+ * distinguishes them by whether a source assistant id came with it.
+ */
+export function resolveRunErrorCardDescription(input: {
+  /** The failure is being told by some other surface (reconnect row, upgrade card). */
+  handedToAnotherSurface: boolean;
+  /** `runFailureUi.messageKey` — null when the mapping table has no copy for it. */
+  mappedMessageKey: RunFailureMessageKey;
+  /** The shared pane-level error slot. */
+  paneError: string | null;
+  /** True when the pane slot was filled by a run failure (`setRunError`), not by us. */
+  paneErrorCameFromARun: boolean;
+  /** The failed run's own upstream string, off its persisted error event. */
+  failedRunRawDetail: string | null;
+}): RunErrorCardDescription {
+  if (input.handedToAnotherSurface) return { render: 'none' };
+  if (input.mappedMessageKey) {
+    return { render: 'mapped', messageKey: input.mappedMessageKey };
+  }
+  if (input.paneError != null) {
+    // An empty pane slot still SHADOWS the run's raw detail (it is the higher
+    // priority source), and an empty card says nothing — so no card, exactly as
+    // before. Whether that silence is right is a separate question from this one.
+    if (!input.paneError) return { render: 'none' };
+    return input.paneErrorCameFromARun
+      ? { render: 'fallback' }
+      : { render: 'app-text', text: input.paneError };
+  }
+  // Nothing in the pane slot, so the only text left is the run's own — raw by
+  // definition, whether or not a `runFailureUi` was resolved for it.
+  if (input.failedRunRawDetail) return { render: 'fallback' };
+  return { render: 'none' };
+}
 
 // i18n keys for the unified error card's TITLE (the "error type" line above the
 // detail message). Frontend-only mapping from error code → human-readable type;
