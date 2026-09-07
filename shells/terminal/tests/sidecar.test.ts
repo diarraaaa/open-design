@@ -58,19 +58,6 @@ function generation(path: string, digest: string, id: string): GenerationRecord 
   };
 }
 
-async function waitForSuccessor(stamp: SidecarStamp, generationPid: number, previousHostPid: number) {
-  const deadline = Date.now() + 10_000;
-  let last: any = null;
-  while (Date.now() < deadline) {
-    try {
-      last = await getSidecarStatus<any>(stamp, { generationPid, timeoutMs: 500 });
-      if (last.hostPid !== previousHostPid && last.previousHostPid === previousHostPid) return last;
-    } catch {}
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-  }
-  throw new Error(`Terminal Sidecar successor did not become ready: ${JSON.stringify(last)}`);
-}
-
 async function waitForSidecarExit(stamp: SidecarStamp, generationPid: number) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -82,7 +69,7 @@ async function waitForSidecarExit(stamp: SidecarStamp, generationPid: number) {
 }
 
 describe("Terminal Sidecar refinement", () => {
-  it("keeps the Sidecar generation root while handing an exact Standalone binding to a fresh host", async () => {
+  it("rejects the removed private protocol and binds generations only through public host control", async () => {
     const root = mkdtempSync(join(tmpdir(), "terminal-sidecar-refinement-"));
     roots.push(root);
     const storeRoot = join(root, "store");
@@ -124,7 +111,7 @@ describe("Terminal Sidecar refinement", () => {
       convergeSidecarLaunch(launchRequest, { stabilityMs: 100, timeoutMs: 15_000 }),
       convergeSidecarLaunch(launchRequest, { stabilityMs: 100, timeoutMs: 15_000 }),
     ]);
-    const generationPid = converged.description.resources.pid;
+    let generationPid = converged.description.resources.pid;
     expect(concurrent.description.resources.pid).toBe(generationPid);
     const attachment = { id: "terminal-a", shell: { type: "terminal", version: "0.1.0", buildHash: "c".repeat(64), digest: "d".repeat(64) } };
     const [first, concurrentAttachment] = await Promise.all([
@@ -155,7 +142,7 @@ describe("Terminal Sidecar refinement", () => {
     expect(existsSync(join(scopeRoot, "fixture", "lifecycle.json"))).toBe(false);
     await expect(invokeSidecar(stamp, "standalone.request.v1", {
       schemaVersion: 1, domain: "lifecycle", operation: "status", scope,
-    })).rejects.toThrow("invalid Terminal Sidecar request domain");
+    })).rejects.toThrow("unknown standalone action: standalone.request.v1");
     await expect(invokeSidecar(stamp, STANDALONE_HOST_CONTROL_ACTION, {
       schemaVersion: 1, operation: "lifecycle.start", scope,
       generation: firstGeneration, binding: firstBinding, attachment, attachmentCapability: null,
@@ -177,7 +164,7 @@ describe("Terminal Sidecar refinement", () => {
       domain: "maintenance",
       operation: "sweep-if-idle",
       scope,
-    })).rejects.toThrow("invalid Terminal Sidecar request domain");
+    })).rejects.toThrow("unknown standalone action: standalone.request.v1");
     const originalHost = await getSidecarStatus<any>(stamp, { generationPid });
     expect(originalHost).toMatchObject({ control: "ready", generationPid, hostPid: expect.any(Number), layout: config.layout });
     await invokeSidecar(stamp, STANDALONE_HOST_CONTROL_ACTION, {
@@ -199,23 +186,28 @@ describe("Terminal Sidecar refinement", () => {
       domain: "maintenance",
       operation: "sweep-if-idle",
       scope,
-    })).rejects.toThrow("invalid Terminal Sidecar request domain");
+    })).rejects.toThrow("unknown standalone action: standalone.request.v1");
     const idle = await invokeSidecar<any>(stamp, STANDALONE_HOST_CONTROL_ACTION, {
       schemaVersion: 1,
       operation: "lifecycle.status", scope });
     await invokeSidecar(stamp, STANDALONE_HOST_CONTROL_ACTION, {
       schemaVersion: 1,
       operation: "lifecycle.stop", scope, fence: idle.fence });
-    await invokeSidecar(stamp, "standalone.request.v1", {
+    await expect(invokeSidecar(stamp, "standalone.request.v1", {
       schemaVersion: 1,
       domain: "generation",
       operation: "handoff",
       scope,
       bindingDigest: secondBinding.digest,
       generationId: secondBinding.generationId,
-    });
-    const successor = await waitForSuccessor(stamp, generationPid, originalHost.hostPid);
-    expect(successor).toMatchObject({ control: "ready", generationPid, previousHostPid: originalHost.hostPid });
+    })).rejects.toThrow("unknown standalone action: standalone.request.v1");
+    await stopSidecar(stamp);
+    const replacement = await convergeSidecarLaunch(launchRequest, { stabilityMs: 100, timeoutMs: 15_000 });
+    expect(replacement.description.resources.pid).not.toBe(generationPid);
+    generationPid = replacement.description.resources.pid;
+    const successor = await getSidecarStatus<any>(stamp, { generationPid });
+    expect(successor).toMatchObject({ control: "ready", generationPid });
+    expect(successor.hostPid).not.toBe(originalHost.hostPid);
     const second = await invokeSidecar<any>(stamp, STANDALONE_HOST_CONTROL_ACTION, {
       schemaVersion: 1,
       operation: "lifecycle.start",

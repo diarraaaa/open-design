@@ -242,8 +242,9 @@ export function verifyExactLifecycle(root: string, store: string, terminal: Term
   expect(reattached.result).toMatchObject({
     generationId: first.result.generationId,
     references: 1,
-    sidecar: { generationPid: first.result.sidecar.generationPid, status: "ready" },
+    sidecar: { status: "ready" },
   });
+  expect(reattached.result.sidecar.generationPid).not.toBe(first.result.sidecar.generationPid);
   expect(reattached.result.sidecar.hostPid).not.toBe(first.result.sidecar.hostPid);
   expect(terminal(root, store, "somechan", "shared", "release", { attachmentId: "terminal-a", attachmentCapability: reattached.result.attachmentCapability }).result.references).toBe(0);
   expect(terminal(root, store, "somechan", "updater-scenario", "start", { attachmentId: "terminal-active" }).result).toMatchObject({ state: "running" });
@@ -260,6 +261,9 @@ export function verifyExactLifecycle(root: string, store: string, terminal: Term
   expect(terminal(root, store, "somechan", "shared", "prepare-update", { channelHeadUrl: releases.latestUrls.somechan, activationPolicy: "authorize-silent", feedbackFile }).result).toMatchObject({ status: "prepared", authorized: true });
   expect(readFileSync(join(store, "blobs", "sha256", releases.beta2.artifactSha256))).toEqual(readFileSync(releases.beta2.artifactFile));
   expect(readFileSync(join(store, "blobs", "sha256", releases.beta2.launcherSha256))).toEqual(readFileSync(releases.beta2.launcherFile));
+  const activationBeforeBlockedStart = readFileSync(join(store, "channels", "somechan", "namespaces", "shared", "state.json"), "utf8");
+  expect(() => terminal(root, store, "somechan", "shared", "start", { attachmentId: "cold-candidate" })).toThrow("cold activation cannot replace an occupied generation");
+  expect(readFileSync(join(store, "channels", "somechan", "namespaces", "shared", "state.json"), "utf8")).toBe(activationBeforeBlockedStart);
   expect(terminal(root, store, "somechan", "shared", "apply-update").result).toMatchObject({ status: "blocked", reason: "occupied" });
   const applied = terminal(root, store, "somechan", "shared", "apply-update-force");
   expect(applied.result).toMatchObject({ status: "applied", lifecycle: { state: "running" } });
@@ -285,6 +289,9 @@ export function verifyExactLifecycle(root: string, store: string, terminal: Term
   expect(() => terminal(root, store, "somepreview", "shared", "apply-update-force")).toThrow("injected Terminal candidate startup failure");
   const failedLedger = JSON.parse(readFileSync(join(store, "channels", "somepreview", "namespaces", "shared", "host-lifecycle.json"), "utf8"));
   expect(failedLedger).toMatchObject({ state: "stopped", attachments: [], transition: { kind: "content-restart", phase: "stopped-sealed" } });
+  const recovered = terminal(root, store, "somepreview", "shared", "start", { attachmentId: "recovered-terminal" });
+  expect(recovered.result).toMatchObject({ state: "running", references: 1 });
+  expect(JSON.parse(readFileSync(join(store, "channels", "somepreview", "namespaces", "shared", "host-lifecycle.json"), "utf8")).transition).toBeNull();
   const feedback = readFileSync(feedbackFile, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
   const phases = feedback.map((event) => event.phase);
   expect(phases).toContain("node-verification");

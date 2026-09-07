@@ -3,14 +3,9 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { bootstrapSidecarProcess, handoffCurrentSidecarGeneration, invokeSidecar, SidecarFactory } from "@open-design/sidecar";
+import { bootstrapSidecarProcess, invokeSidecar, SidecarFactory } from "@open-design/sidecar";
 
-const ACTION = "standalone.request.v1";
 const CONFIG_ENV = "OD_TERMINAL_SIDECAR_CONFIG_V1";
-const REQUEST_FIELDS = new Set([
-  "schemaVersion", "scope", "domain", "operation",
-  "bindingDigest", "generationId",
-]);
 
 function readConfig() {
   const serialized = process.env[CONFIG_ENV];
@@ -39,7 +34,6 @@ function readConfig() {
 
 class TerminalSidecarRuntime {
   constructor(config, standalone) {
-    this.config = config;
     this.scope = Object.freeze({ channel: config.channel, namespace: config.namespace });
     this.layout = standalone.validateStandaloneRuntimeLayout(config.layout);
     if (this.layout.resourceStoreRoot !== config.storeRoot) throw new Error("Terminal layout escaped its Store root");
@@ -58,8 +52,6 @@ class TerminalSidecarRuntime {
         standalone.createStandaloneShellUpdaterCapabilityHandler(updater),
       ]),
       resolveGeneration: async (binding) => {
-        const expected = process.env.OD_TERMINAL_EXPECTED_BINDING_DIGEST;
-        if (expected != null && expected !== binding.digest) throw new Error("Terminal Sidecar successor received another generation binding");
         const launcherBytes = await readFile(binding.launcher.path);
         if (createHash("sha256").update(launcherBytes).digest("hex") !== binding.launcher.blobSha256) {
           throw new Error("materialized Standalone launcher failed Sidecar handoff binding");
@@ -67,50 +59,6 @@ class TerminalSidecarRuntime {
         return standalone.resolveStandaloneGenerationHandoff(await import(pathToFileURL(binding.launcher.path).href));
       },
     });
-  }
-
-  assertScope(scope) {
-    if (scope?.channel !== this.scope.channel || scope?.namespace !== this.scope.namespace) {
-      throw new Error("Terminal Sidecar request escaped its channel and namespace stamp");
-    }
-    return this.scope;
-  }
-
-  async request(message) {
-    if (message?.schemaVersion !== 1) throw new Error("unsupported Terminal Sidecar request schema");
-    this.assertScope(message.scope);
-    if (Object.keys(message).some(key => !REQUEST_FIELDS.has(key))) throw new Error("Terminal Sidecar request contains unsupported fields");
-    if (message.domain === "generation") return await this.generationRequest(message);
-    throw new Error("invalid Terminal Sidecar request domain");
-  }
-
-  async generationRequest(message) {
-    if (message.operation !== "handoff" || typeof message.bindingDigest !== "string" || typeof message.generationId !== "string") {
-      throw new Error("unsupported Terminal Sidecar generation operation");
-    }
-    const status = await this.lifecycle.status();
-    if (status.references !== 0) {
-      return { accepted: false, occupants: status.occupants, reason: "occupied" };
-    }
-    await handoffCurrentSidecarGeneration({
-      args: [this.config.sidecarHost],
-      command: process.execPath,
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        OD_TERMINAL_EXPECTED_BINDING_DIGEST: message.bindingDigest,
-        OD_TERMINAL_EXPECTED_GENERATION_ID: message.generationId,
-        OD_TERMINAL_PREVIOUS_HOST_PID: String(process.pid),
-      },
-    });
-    setTimeout(() => process.exit(0), 25);
-    return {
-      accepted: true,
-      bindingDigest: message.bindingDigest,
-      generationId: message.generationId,
-      generationPid: Number(process.env.OD_TERMINAL_GENERATION_PID ?? 0) || null,
-      retiringHostPid: process.pid,
-    };
   }
 
 }
@@ -137,10 +85,6 @@ const client = SidecarFactory.create({
       if (runtime == null) throw new Error("Terminal Sidecar runtime is not ready");
       return await runtime.control.request(input);
     },
-    [ACTION]: async (input) => {
-      if (runtime == null) throw new Error("Terminal Sidecar runtime is not ready");
-      return await runtime.request(input);
-    },
   },
   lifecycle: {
     async start(resources) {
@@ -158,7 +102,6 @@ const client = SidecarFactory.create({
         dataRoot: client.resources.dataRoot,
         generationPid: client.resources.pid,
         hostPid: process.pid,
-        previousHostPid: Number.parseInt(process.env.OD_TERMINAL_PREVIOUS_HOST_PID ?? "0", 10) || null,
         runtimeRoot: client.resources.runtimeRoot,
         layout: active.layout,
         lifecycle: await active.lifecycle.status(),

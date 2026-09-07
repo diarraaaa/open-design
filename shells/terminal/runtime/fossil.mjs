@@ -9,7 +9,6 @@ const requestPath = process.env.OD_TERMINAL_FOSSIL_REQUEST_V1;
 const resultPath = process.env.OD_TERMINAL_FOSSIL_RESULT_V1;
 if (!requestPath || !resultPath) throw new Error("Terminal fossil exchange environment is incomplete");
 
-const sidecarAction = "standalone.request.v1";
 let activeSidecarStamp = null;
 
 const digestPattern = /^[a-f0-9]{64}$/;
@@ -85,18 +84,6 @@ async function readUrl(url) {
   const response = await fetch(url, { redirect: "error" });
   if (!response.ok) throw new Error(`artifact request failed: ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
-}
-
-function sidecarRequestTimeoutMs(message) {
-  if (message.domain === "generation" && message.operation === "handoff") return 60_000;
-  return 5_000;
-}
-
-async function sidecarRequest(message) {
-  if (activeSidecarStamp == null) throw new Error("Terminal Sidecar has not converged");
-  return await invokeSidecar(activeSidecarStamp, sidecarAction, { schemaVersion: 1, ...message }, {
-    timeoutMs: sidecarRequestTimeoutMs(message),
-  });
 }
 
 function physicalResourceStamps(scope) {
@@ -188,32 +175,6 @@ async function convergeTerminalSidecar(request, installation, guarded = false) {
   return { description: converged.description, status };
 }
 
-async function handoffTerminalSidecarGeneration(binding, convergence) {
-  const previousHostPid = convergence.status.hostPid;
-  const response = await sidecarRequest({
-    domain: "generation",
-    operation: "handoff",
-    scope: binding.scope,
-    bindingDigest: binding.digest,
-    generationId: binding.generationId,
-  });
-  if (response?.accepted !== true || response.retiringHostPid !== previousHostPid) {
-    throw new Error("Terminal Sidecar rejected an idle exact generation handoff");
-  }
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    try {
-      const status = await getSidecarStatus(activeSidecarStamp, {
-        generationPid: convergence.description.resources.pid,
-        timeoutMs: 500,
-      });
-      if (status?.hostPid !== previousHostPid && status?.previousHostPid === previousHostPid) return status;
-    } catch {}
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-  }
-  throw new Error("Terminal Sidecar exact generation successor did not become ready");
-}
-
 async function sidecarControlRequest(standalone, message) {
   if (activeSidecarStamp == null) throw new Error("Terminal Sidecar has not converged");
   return await invokeSidecar(activeSidecarStamp, standalone.STANDALONE_HOST_CONTROL_ACTION, message, {
@@ -247,6 +208,10 @@ async function trustedKeys(installation) {
 }
 
 async function ensureInstalledSeed(request, installation, store, keys, feedback) {
+  // A healthy channel-scoped Store no longer depends on the carrier's seed.
+  // In particular, recovery must not replace its verified generation with the
+  // baseline shipped for another channel.
+  if ((await store.readState()).lastHealthy != null) return;
   const envelope = await readJson(resolve(installation.root, installation.manifest.releaseDocuments.content.file));
   installation.standalone.verifyStandaloneMetadata(envelope, keys);
   if (envelope.metadata.channel !== request.channel) throw new Error("installed seed belongs to another channel");
@@ -286,7 +251,7 @@ async function execute(request, installation) {
 async function executeOperation(request, installation, guarded) {
   if (request.operation === "probe") return { capabilities: installation.manifest.capabilities, channel: request.channel, namespace: request.namespace };
   const sidecarConvergence = await convergeTerminalSidecar(request, installation, guarded);
-  const sidecarDescription = sidecarConvergence.description;
+  let sidecarDescription = sidecarConvergence.description;
   let currentSidecarStatus = sidecarConvergence.status;
   const sidecar = () => Object.freeze({
     bootstrapPid: currentSidecarStatus.bootstrapPid,
@@ -307,16 +272,7 @@ async function executeOperation(request, installation, guarded) {
   };
   const feedback = request.feedbackFile == null ? undefined : async (event) => appendFile(request.feedbackFile, `${JSON.stringify(event)}\n`, "utf8");
   const launcher = new standalone.VersionedLauncher(store, lifecycle, shell, request.attachmentId ?? "terminal-control", feedback);
-  const bootloader = new standalone.FossilBootloader(store, shell, async (binding) => {
-    const status = await lifecycle.status(binding.scope);
-    if (status.state === "running" && status.references === 0) {
-      currentSidecarStatus = await handoffTerminalSidecarGeneration(binding, {
-        ...sidecarConvergence,
-        status: currentSidecarStatus,
-      });
-    }
-    return launcher;
-  });
+  const bootloader = new standalone.FossilBootloader(store, shell, async () => launcher);
   if (request.operation.startsWith("shell-update-")) {
     const updater = sidecarShellUpdater(standalone, { channel: request.channel, namespace: request.namespace }, shell.type);
     const action = ({
@@ -334,6 +290,28 @@ async function executeOperation(request, installation, guarded) {
   }
   if (request.operation === "start") {
     await ensureInstalledSeed(request, installation, store, keys, feedback);
+    const scope = { channel: request.channel, namespace: request.namespace };
+    const current = await lifecycle.status(scope);
+    const state = await store.readState();
+    if (current.references > 0 && state.activationIntent != null && state.prepared !== current.generationId) {
+      throw new standalone.StandaloneBootstrapError("standalone-occupied", "cold activation cannot replace an occupied generation");
+    }
+    if (current.references === 0) {
+      const ledger = new standalone.StandaloneHostLifecycleLedger(storeRoot, scope);
+      const before = await ledger.readOrInitial();
+      if (before.transition?.kind === "shell-install") throw new Error("Shell installation must complete before Terminal start");
+      const physical = await stopSidecars(physicalResourceStamps(request).map((stamp) => ({ stamp })));
+      if (physical.remainingPids.length > 0) throw new Error("Terminal cold start retirement left physical survivors");
+      const continuation = new standalone.StandaloneHostLifecycle(scope, { statePort: ledger });
+      const stopped = await continuation.status();
+      const durable = await ledger.readOrInitial();
+      if (durable.transition != null) {
+        await continuation.forceStopTransition(durable.transition.token, durable.transition.fence);
+      } else if (stopped.state !== "stopped") await continuation.stop(stopped.fence);
+      const replacement = await convergeTerminalSidecar(request, installation, true);
+      sidecarDescription = replacement.description;
+      currentSidecarStatus = replacement.status;
+    }
     const status = await bootloader.start();
     return { ...status, attachmentCapability: lifecycle.exportAttachmentCredential(request.attachmentId ?? "terminal-control").attachmentCapability, sidecar: sidecar() };
   }
@@ -348,15 +326,21 @@ async function executeOperation(request, installation, guarded) {
         bootstrapPid: physicalStatus.bootstrapPid,
         generationPid: sidecarDescription.resources.pid,
         hostPid: physicalStatus.hostPid,
-        previousHostPid: physicalStatus.previousHostPid,
         status: physicalStatus.control,
       },
     };
   }
   if (request.operation === "stop") {
-    const stopped = await launcher.stop();
     const physical = await stopSidecars(physicalResourceStamps(request).map((stamp) => ({ stamp })));
     if (physical.remainingPids.length > 0) throw new Error("Terminal physical resource retirement left survivors");
+    const scope = { channel: request.channel, namespace: request.namespace };
+    const ledger = new standalone.StandaloneHostLifecycleLedger(storeRoot, scope);
+    const continuation = new standalone.StandaloneHostLifecycle(scope, { statePort: ledger });
+    const current = await continuation.status();
+    const durable = await ledger.readOrInitial();
+    if (durable.transition != null) await continuation.forceStopTransition(durable.transition.token, durable.transition.fence);
+    else await continuation.stop(current.fence);
+    const stopped = await continuation.status();
     return { ...stopped, sidecar: { generationPid: sidecarDescription.resources.pid, remainingPids: physical.remainingPids } };
   }
   const source = request.operation === "prepare-update"
