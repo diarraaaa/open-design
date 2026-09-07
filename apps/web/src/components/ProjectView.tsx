@@ -2924,6 +2924,14 @@ export function ProjectView({
     : '';
   const amrBalanceCardScopeRef = useRef(amrBalanceCardScope);
   amrBalanceCardScopeRef.current = amrBalanceCardScope;
+  /**
+   * 把补查到的读数写进那条失败消息。**在渲染之后才会被调用**,所以装在 ref 里 ——
+   * 真正的写入要走 `updateMessageById`(落库那一半在它里面),而它在本组件里
+   * 定义得比这条 effect 晚,直接引用会撞 TDZ。填充在它旁边,见那一处的注释。
+   */
+  const archiveAmrBalanceReadingRef = useRef<
+    (messageId: string, balanceUsd: number) => void
+  >(() => undefined);
   useEffect(() => {
     if (!amrBalanceFailureMessageId) {
       setAmrBalanceFailureWalletUnavailable(false);
@@ -2932,11 +2940,23 @@ export function ProjectView({
     let cancelled = false;
     // 换了一轮失败就重新查:上一轮的结论不能替这一轮回答。
     setAmrBalanceFailureWalletUnavailable(false);
+    if (amrBalanceFailureArchivedUsd != null) {
+      // **这一轮已经存过档了 —— 不再问钱包。** 卡上的数字是「那一轮为什么停下来」
+      // 的凭据,不是当前余额的读数(T61 ④,产品 2026-09-07:「它就好像历史记录
+      // 一样,存档在当时状态了」)。再查一次就会拿今天的余额去改写当时的失败态:
+      // 充完值回来看,那一轮会写着「剩余额度 $20.00 / 余额可能撑不完下一个任务」,
+      // 数字是今天的、句子是当时的,作为凭据是错的。
+      setAmrBalanceCard({
+        balanceUsd: amrBalanceFailureArchivedUsd,
+        anchorMessageId: amrBalanceFailureMessageId,
+      });
+      return;
+    }
     void (async () => {
-      // 失败事件本身**不带余额**(daemon 的 `classifyAmrAccountFailure` 只给出
-      // 错误码),所以数字只能现查。有工作区身份就走闸门那条被后端证明过的
-      // 工作区读数,没有(旧的未绑定项目)才退回账号钱包 —— 那种项目花的
-      // 本来就是账号的钱。
+      // 存档里还没有这一轮 —— 要么它刚死、要么它落库时还没有这个字段。失败事件
+      // 本身**不带余额**(daemon 的 `classifyAmrAccountFailure` 只给出错误码),
+      // 所以第一次只能现查。有工作区身份就走闸门那条被后端证明过的工作区读数,
+      // 没有(旧的未绑定项目)才退回账号钱包 —— 那种项目花的本来就是账号的钱。
       const snapshot = await fetchAmrBalanceCardWalletSnapshot(
         amrBalanceCardScopeRef.current,
       );
@@ -2955,11 +2975,15 @@ export function ProjectView({
       // 这份读数是替**那条失败的助手消息**取的,卡就挂在它下面(T61)。
       setAmrBalanceCard({ balanceUsd, anchorMessageId: amrBalanceFailureMessageId });
       setAmrBalanceCardProfile(snapshot?.profile ?? null);
+      // 并且**记下来**:这一轮的凭据从此不再重新报价(T61 ④)。写回去之后
+      // `amrBalanceFailureArchivedUsd` 就有值了,这条 effect 会再跑一次并走上面
+      // 那条不查钱包的路,把同一个数字原样交回去 —— 幂等,不会来回改写。
+      archiveAmrBalanceReadingRef.current(amrBalanceFailureMessageId, balanceUsd);
     })();
     return () => {
       cancelled = true;
     };
-  }, [amrBalanceFailureMessageId, amrBalanceCardScopeKey]);
+  }, [amrBalanceFailureMessageId, amrBalanceFailureArchivedUsd, amrBalanceCardScopeKey]);
   /**
    * 这一次要付钱的工作区,把这个人放进 §6.V 的哪一格。
    *
@@ -5139,6 +5163,31 @@ export function ProjectView({
     },
     [project.id, activeConversationId, projectRunWorkspaceContext],
   );
+
+  /**
+   * 存档写入口的实体(声明在上面的余额补查那一段,见
+   * `archiveAmrBalanceReadingRef` 的注释)。放在这里是因为写回要走
+   * `updateMessageById` —— 落库那一半在它里面,而它在本组件里定义得比那条
+   * effect 晚。
+   *
+   * 走 `updateMessageById(..., true)` 而不是自己拼一次 PUT:那条失败事件本来
+   * 就是这条路写进去的(`appendAssistantErrorEvent`),存档只是同一条事件上
+   * **晚到的一个事实**,和 `chat-events.ts` 里 `failureCategory` / `retryable`
+   * 后补进同一条 error 事件是同一个形状。另起一条写路只会让「这条消息谁在写」
+   * 多出一个答案。
+   *
+   * **一轮只写一次**由调用方保证:补查那条 effect 只在「存档里还没有这一轮」
+   * 那条分支上调它,写完之后存档就有值了,effect 重跑会走另一条路。
+   * `stampAmrBalanceUsdOnFailure` 自己再兜一层幂等 —— 已经有数字就原样返回,
+   * 所以哪怕真被叫第二次,**记下来的那个数字也不会被改写**。
+   */
+  archiveAmrBalanceReadingRef.current = (messageId, balanceUsd) => {
+    updateMessageById(
+      messageId,
+      (prev) => stampAmrBalanceUsdOnFailure(prev, balanceUsd),
+      true,
+    );
+  };
 
   const appendConversationMessage = useCallback(
     (

@@ -1532,7 +1532,7 @@ function resolveRunFailureUiIgnoringSelfPromotion(
       //
       // 所以这一档整张卡不画,交给升级卡。点亮它的是 `ProjectView` ——
       // 它认出这条失败之后去把钱包读数取回来,喂给 `amrBalanceCardUsd`
-      // (见 `amrInsufficientBalanceFailureMessageId`)。这和 R9 断线那一档
+      // (见 `amrInsufficientBalanceFailure`)。这和 R9 断线那一档
       // 是同一个手法:`suppressCard` 的意思一直都是「别人已经在说这件事了」。
       //
       // 剩下的字段不是死码:标题 / 正文仍是这条失败**在别处**的人话来源

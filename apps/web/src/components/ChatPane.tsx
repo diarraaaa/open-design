@@ -772,7 +772,7 @@ interface Props {
    * **失败之后的那次钱包补查已经落地,而且没读出数字。**
    *
    * 只有跑到一半死在余额上那条路用得着它。那条失败自己**不带余额**,升级卡的
-   * 数字要由 `ProjectView` 事后补查一次(`amrInsufficientBalanceFailureMessageId`)。
+   * 数字要由 `ProjectView` 事后补查一次(`amrInsufficientBalanceFailure`)。
    * 补查落空时升级卡画不出来,而报错卡又已经把自己交给了升级卡 —— 两边都不画,
    * 用户在一轮「钱不够」之后屏幕上什么都不剩,没有充值入口也没有重试。
    *
