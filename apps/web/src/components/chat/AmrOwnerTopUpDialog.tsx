@@ -25,6 +25,7 @@ import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import { Icon } from '../Icon';
 import { useT } from '../../i18n';
+import { chatSeam } from './ChatRoot';
 import styles from './AmrOwnerTopUpDialog.module.css';
 
 export interface AmrOwnerTopUpDialogProps {
@@ -64,9 +65,28 @@ export function AmrOwnerTopUpDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [inline, onClose]);
 
+  /*
+   * 浮层形态自己带上 `--chat-*` 接缝(和 `SupportDialog` 同一条线,同一个写法)。
+   *
+   * 它走 portal 挂到 `<body>` 下,而自定义属性按 **DOM 树**继承 —— 于是它落在
+   * 页面上那个接缝之外,遮罩的 `color-mix(… var(--chat-text-strong) …)`、卡片的
+   * `background` / `box-shadow` / `border-radius` 全部解析失败,弹窗整个透明,
+   * 文字裸浮在页面上(OPEND-2722 报的「未正常弹出提示」就是这个现场 ——
+   * 它其实弹了)。`ChatRoot.tsx` 的注释早写过这条:脱离接缝
+   * 「组件会退化成无色无字号的裸结构 —— **而且不报错**」。
+   *
+   * 就地形态(陈列页那一格)本来就渲染在接缝之内,再挂一层是多余的,也会让
+   * 陈列页多出一个 `data-chat-root`,把按这个属性数接缝的回归测试搅乱。
+   */
+  const seam = inline ? null : chatSeam();
   const dialog = (
     <div
-      className={inline ? `${styles.overlay} ${styles.overlayInline}` : styles.overlay}
+      className={
+        inline
+          ? `${styles.overlay} ${styles.overlayInline}`
+          : `${styles.overlay} ${seam?.className ?? ''}`.trim()
+      }
+      {...(seam ? { 'data-chat-root': seam['data-chat-root'] } : {})}
       data-testid="amr-balance-owner-dialog"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();

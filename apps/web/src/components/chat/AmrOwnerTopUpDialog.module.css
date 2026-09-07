@@ -8,7 +8,23 @@
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  /*
+   * 模态档 —— 和 `SupportDialog` 逐字同一个数,因为它们是同一族的同一件东西。
+   *
+   * 原来这里是 40,压不住同屏任何一层:真机 `elementFromPoint` 探到右上角
+   * `.entry-top-right-cluster` 是 **150**、输入框 `.chat-composer-fixed-layer`
+   * 是 **45**(`styles/chat.css`)。于是遮罩像漏了两个洞 —— 输入框和右上角
+   * 照常亮着,而这张弹窗服务的正是 OPEND-2722(团队成员额度不足找所有者充值),
+   * 用户看到的是一个被戳穿的遮罩。`SupportDialog` 2026-08-27 被报的是逐字同一件事。
+   *
+   * 取 1500 是**跟 `SupportDialog` 对齐**,而它当初取 1500 是跟聊天区另一个真模态
+   * `.staged-preview-modal`(1200)对齐 —— 不自立一个刚好够用的数字,那种数字
+   * 会在下一个人抬高某层 chrome 时再坏一次。
+   *
+   * 守护:`tests/components/chat/chat-overlay-layer.test.ts`(按目录扫描,
+   * 不是钉死某个文件 —— 这个缺陷当初就是因为守护只守 `SupportDialog` 一个文件才漏的)。
+   */
+  z-index: 1500;
   display: grid;
   place-items: center;
   padding: 18px;
