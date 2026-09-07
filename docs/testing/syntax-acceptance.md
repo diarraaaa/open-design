@@ -27,7 +27,9 @@ patches in memory, fully rechecks and commits only a passing candidate through a
 guarded atomic replacement. Unsupported, ambiguous or incomplete work fails closed.
 
 The shared daemon path covers eligible UI/CLI and ordinary/OD Next Runs, not only
-ODEval or production-phase Runs. No HTML, absent or untouched canonical entry skips.
+ODEval or production-phase Runs. No valid HTML entry skips. When touchedPaths are
+provided, the canonical entry must have been touched; otherwise existing artifact
+evidence determines applicability.
 Inspection is limited to inline scripts and supplied related code paths; it does
 not recursively fetch every script URL or validate CSS, visuals, runtime or business
 behavior. Parsing success does not prove author intent.
