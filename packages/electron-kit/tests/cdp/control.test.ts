@@ -16,13 +16,24 @@ afterEach(async () => {
 async function userDataRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "electron-cdp-control-"));
   roots.push(root);
-  await mkdir(root, { recursive: true });
-  await writeFile(join(root, "DevToolsActivePort"), "43123\n/devtools/browser/test\n");
+  const sessionData = join(root, "exact/channels/betahyx/namespaces/cdp-test-headless/electron-session");
+  await mkdir(sessionData, { recursive: true });
+  await writeFile(join(sessionData, "DevToolsActivePort"), "43123\n/devtools/browser/test\n");
+  // A different session's stale bootstrap receipt must never be consumed.
+  await writeFile(join(root, "DevToolsActivePort"), "43124\n/devtools/browser/wrong-session\n");
   return root;
 }
 
+function request(root: string) {
+  return {
+    schemaVersion: 1, operation: "electron.cdp.contract.invoke",
+    session: { baseUserDataRoot: root, channel: "betahyx", namespace: "cdp-test", presentation: "headless" },
+    timeoutMs: 1_000, close: false, invocations: [{ path: ["updater", "status"], args: [] }],
+  };
+}
+
 function installCdpFixture(responses: Array<Readonly<{ error?: unknown; result?: unknown }>>): { fetch: ReturnType<typeof vi.fn> } {
-  const fetch = vi.fn(async () => new Response(JSON.stringify([
+  const fetch = vi.fn(async (_url: string) => new Response(JSON.stringify([
     { type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:43123/devtools/page/test" },
   ]), { status: 200 }));
   class FixtureWebSocket extends EventTarget {
@@ -59,7 +70,7 @@ describe("Electron CDP contract control", () => {
     const receipt = await executeElectronCdpContractControl({
       schemaVersion: 1,
       operation: "electron.cdp.contract.invoke",
-      userDataRoot: root,
+      session: request(root).session,
       timeoutMs: 1_000,
       close: true,
       invocations: [{ path: ["updater", "status"], args: [] }],
@@ -67,6 +78,7 @@ describe("Electron CDP contract control", () => {
 
     expect(receipt.results).toEqual([{ state: "ready" }]);
     expect(fixture.fetch).toHaveBeenCalledTimes(3);
+    expect(fixture.fetch.mock.calls.every(([url]) => url === "http://127.0.0.1:43123/json/list")).toBe(true);
   });
 
   it("records an expected renderer context transition without exposing the bridge slot", async () => {
@@ -76,7 +88,7 @@ describe("Electron CDP contract control", () => {
     const receipt = await executeElectronCdpContractControl({
       schemaVersion: 1,
       operation: "electron.cdp.contract.invoke",
-      userDataRoot: root,
+      session: request(root).session,
       timeoutMs: 1_000,
       close: false,
       invocations: [{
@@ -87,5 +99,32 @@ describe("Electron CDP contract control", () => {
     });
 
     expect(receipt.results).toEqual([{ outcome: "context-destroyed" }]);
+  });
+
+  it("bounds malformed discovery instead of polling forever", async () => {
+    const root = await userDataRoot();
+    await writeFile(join(root, "exact/channels/betahyx/namespaces/cdp-test-headless/electron-session/DevToolsActivePort"), "not-a-port");
+    await expect(executeElectronCdpContractControl(request(root))).rejects.toThrow("discovery timed out");
+  });
+
+  it.each(["open", "command", "malformed"])("terminates a broken WebSocket %s and closes it", async (stage) => {
+    const root = await userDataRoot(), closed = vi.fn();
+    installCdpFixture([]);
+    class HangingSocket extends EventTarget {
+      constructor(_url: string) { super(); if (stage !== "open") queueMicrotask(() => this.dispatchEvent(new Event("open"))); }
+      send() { if (stage === "malformed") queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: "null" }))); }
+      close() { closed(); }
+    }
+    vi.stubGlobal("WebSocket", HangingSocket);
+    await expect(executeElectronCdpContractControl(request(root))).rejects.toThrow(stage === "malformed" ? "response is invalid" : "timed out");
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it("bounds discovery HTTP responses that never arrive", async () => {
+    const root = await userDataRoot();
+    vi.stubGlobal("fetch", (_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal!.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+    }));
+    await expect(executeElectronCdpContractControl(request(root))).rejects.toThrow("page discovery timed out");
   });
 });

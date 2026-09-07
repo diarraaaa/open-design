@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createElectronContractInvocationExpression } from "@open-design/electron-contract/automation";
 
 import { parseElectronCdpActivePort, type ElectronCdpDiscovery } from "../runtime/session/cdp.js";
+import { resolveElectronNamespacePaths, resolveElectronSessionNamespace } from "../runtime/session/namespace-paths.js";
 
 type JsonObject = Record<string, any>;
 
@@ -20,25 +21,23 @@ function allowedKeys(value: JsonObject, keys: readonly string[], label: string):
   if (Object.keys(value).some((key) => !keys.includes(key))) throw new Error(`${label} fields are invalid`);
 }
 
-async function waitForDiscovery(userDataRoot: string, timeoutMs: number): Promise<Extract<ElectronCdpDiscovery, { state: "ready" }>> {
-  const path = resolve(userDataRoot, "DevToolsActivePort"), deadline = Date.now() + timeoutMs;
+async function waitForDiscovery(sessionDataRoot: string, deadline: number): Promise<Extract<ElectronCdpDiscovery, { state: "ready" }>> {
+  const path = resolve(sessionDataRoot, "DevToolsActivePort");
   for (;;) {
     try {
       const discovery = parseElectronCdpActivePort(await readFile(path, "utf8"));
       if (discovery.state === "ready") return discovery;
     }
-    catch (error) {
-      if (Date.now() >= deadline) throw new Error("Electron CDP discovery timed out", { cause: error });
-      await new Promise((done) => setTimeout(done, 100));
-    }
+    catch { /* Chromium may not have published the scoped receipt yet. */ }
+    if (Date.now() >= deadline) throw new Error("Electron CDP discovery timed out");
+    await new Promise((done) => setTimeout(done, 100));
   }
 }
 
-async function pageWebSocketUrl(discoveryUrl: string, timeoutMs: number): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
+async function pageWebSocketUrl(discoveryUrl: string, deadline: number): Promise<string> {
   for (;;) {
     try {
-      const response = await fetch(`${discoveryUrl}/json/list`, { redirect: "error" });
+      const response = await fetch(`${discoveryUrl}/json/list`, { redirect: "error", signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
       if (response.ok) {
         const targets = await response.json() as JsonObject[];
         const page = targets.find((target) => target.type === "page" && typeof target.webSocketDebuggerUrl === "string");
@@ -50,20 +49,30 @@ async function pageWebSocketUrl(discoveryUrl: string, timeoutMs: number): Promis
   }
 }
 
-async function openSocket(url: string): Promise<WebSocket> {
+async function openSocket(url: string, deadline: number): Promise<WebSocket> {
   const socket = new WebSocket(url);
-  await new Promise<void>((resolveOpen, reject) => {
-    socket.addEventListener("open", () => resolveOpen(), { once: true });
-    socket.addEventListener("error", () => reject(new Error("Electron CDP WebSocket failed to open")), { once: true });
-  });
+  try {
+    await new Promise<void>((resolveOpen, reject) => {
+      const timer = setTimeout(() => { cleanup(); reject(new Error("Electron CDP WebSocket open timed out")); }, Math.max(1, deadline - Date.now()));
+      const cleanup = () => { clearTimeout(timer); socket.removeEventListener("open", opened); socket.removeEventListener("error", failed); socket.removeEventListener("close", failed); };
+      const opened = () => { cleanup(); resolveOpen(); };
+      const failed = () => { cleanup(); reject(new Error("Electron CDP WebSocket failed to open")); };
+      socket.addEventListener("open", opened, { once: true });
+      socket.addEventListener("error", failed, { once: true });
+      socket.addEventListener("close", failed, { once: true });
+    });
+  } catch (error) { socket.close(); throw error; }
   return socket;
 }
 
-async function command(socket: WebSocket, method: string, params: JsonObject): Promise<JsonObject> {
+async function command(socket: WebSocket, method: string, params: JsonObject, deadline: number): Promise<JsonObject> {
   return await new Promise((resolveResult, reject) => {
     const id = 1;
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`Electron CDP ${method} timed out`)); }, Math.max(1, deadline - Date.now()));
     const onMessage = (event: MessageEvent) => {
-      const message = JSON.parse(String(event.data)) as JsonObject;
+      let message: JsonObject;
+      try { message = record(JSON.parse(String(event.data)), "Electron CDP response"); }
+      catch (error) { cleanup(); reject(new Error("Electron CDP response is invalid", { cause: error })); return; }
       if (message.id !== id) return;
       cleanup();
       if (message.error != null) reject(new Error(`Electron CDP command failed: ${JSON.stringify(message.error)}`));
@@ -74,12 +83,14 @@ async function command(socket: WebSocket, method: string, params: JsonObject): P
       reject(new Error("Electron CDP WebSocket closed"));
     };
     const cleanup = () => {
+      clearTimeout(timer);
       socket.removeEventListener("message", onMessage);
       socket.removeEventListener("close", onClose);
     };
     socket.addEventListener("message", onMessage);
     socket.addEventListener("close", onClose, { once: true });
-    socket.send(JSON.stringify({ id, method, params }));
+    try { socket.send(JSON.stringify({ id, method, params })); }
+    catch (error) { cleanup(); reject(error); }
   });
 }
 
@@ -109,12 +120,12 @@ async function invokeContract(
     try {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error("Electron CDP contract invocation timed out");
-      socket = await openSocket(await pageWebSocketUrl(discoveryUrl, remaining));
+      socket = await openSocket(await pageWebSocketUrl(discoveryUrl, deadline), deadline);
       const evaluated = await command(socket, "Runtime.evaluate", {
         awaitPromise: true,
         expression: createElectronContractInvocationExpression(invocation.path, invocation.args),
         returnByValue: true,
-      });
+      }, deadline);
       const error = invocationError(evaluated);
       if (error != null) throw error;
       return evaluated.result?.value;
@@ -137,8 +148,9 @@ async function closeBrowser(discoveryUrl: string, deadline: number): Promise<voi
   try {
     const remaining = Math.min(deadline - Date.now(), 2_000);
     if (remaining <= 0) return;
-    socket = await openSocket(await pageWebSocketUrl(discoveryUrl, remaining));
-    await command(socket, "Browser.close", {});
+    const closeDeadline = Date.now() + remaining;
+    socket = await openSocket(await pageWebSocketUrl(discoveryUrl, closeDeadline), closeDeadline);
+    await command(socket, "Browser.close", {}, closeDeadline);
   } catch {
     // Browser.close commonly tears down the transport before its response is
     // observable. The runtime shutdown log remains the authoritative proof.
@@ -149,12 +161,20 @@ async function closeBrowser(discoveryUrl: string, deadline: number): Promise<voi
 
 export async function executeElectronCdpContractControl(value: unknown): Promise<Readonly<{ discoveryUrl: string; results: readonly unknown[] }>> {
   const input = record(value, "Electron CDP contract request");
-  exactKeys(input, ["close", "invocations", "operation", "schemaVersion", "timeoutMs", "userDataRoot"], "Electron CDP contract request");
-  if (input.schemaVersion !== 1 || input.operation !== "electron.cdp.contract.invoke" || typeof input.userDataRoot !== "string"
+  exactKeys(input, ["close", "invocations", "operation", "schemaVersion", "timeoutMs", "session"], "Electron CDP contract request");
+  if (input.schemaVersion !== 1 || input.operation !== "electron.cdp.contract.invoke"
     || typeof input.close !== "boolean" || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1_000 || input.timeoutMs > 120_000
     || !Array.isArray(input.invocations) || input.invocations.length === 0) {
     throw new Error("Electron CDP contract request is invalid");
   }
+  const session = record(input.session, "Electron CDP session");
+  exactKeys(session, ["baseUserDataRoot", "channel", "namespace", "presentation"], "Electron CDP session");
+  if (typeof session.baseUserDataRoot !== "string" || session.baseUserDataRoot.length === 0
+    || typeof session.channel !== "string" || typeof session.namespace !== "string"
+    || (session.presentation !== "interactive" && session.presentation !== "headless")) throw new Error("Electron CDP session is invalid");
+  const paths = resolveElectronNamespacePaths(session.baseUserDataRoot, {
+    channel: session.channel, namespace: resolveElectronSessionNamespace(session.namespace, session.presentation),
+  });
   const invocations = input.invocations.map((value: unknown, index: number) => {
     const invocation = record(value, `Electron CDP invocation ${index}`);
     allowedKeys(invocation, ["args", "path", "settleOnContextDestroyed"], `Electron CDP invocation ${index}`);
@@ -168,8 +188,8 @@ export async function executeElectronCdpContractControl(value: unknown): Promise
       settleOnContextDestroyed: invocation.settleOnContextDestroyed === true,
     });
   });
-  const discovery = await waitForDiscovery(input.userDataRoot, input.timeoutMs);
   const deadline = Date.now() + input.timeoutMs;
+  const discovery = await waitForDiscovery(paths.sessionDataRoot, deadline);
   const results: unknown[] = [];
   for (const invocation of invocations) results.push(await invokeContract(discovery.discoveryUrl, invocation, deadline));
   if (input.close) await closeBrowser(discovery.discoveryUrl, deadline);

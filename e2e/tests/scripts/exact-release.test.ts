@@ -21,6 +21,9 @@ describe("exact Electron release topology", () => {
     expect(hot).toMatch(/wait "\$electron_pid"\s+trap - EXIT\s+OD_PACKAGED_E2E_HEADLESS=1 ELECTRON_KIT_SMOKE_EXIT_MS=3000 "\$executable" --user-data-dir="\$RUNNER_TEMP\/electron-user-data"/u);
     expect(hot).not.toContain("python3");
     expect(hot).not.toContain("candidateVersion");
+    expect(hot).toContain('CHANNEL: ${{ inputs.channel }}');
+    expect(hot).toContain('channel:process.env.CHANNEL,namespace:process.env.ELECTRON_NAMESPACE,presentation:"headless"');
+    expect(hot).not.toContain("DevToolsActivePort");
   });
 
   it("delegates source branch eligibility to tools-release without weakening exact checkout binding", async () => {
