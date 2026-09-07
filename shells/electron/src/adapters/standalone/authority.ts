@@ -68,6 +68,7 @@ import {
   type ElectronPhysicalResourceSetDeclaration,
 } from "./physical-resources.js";
 import { withElectronPhysicalResourceSetGuard } from "./guarded-lifecycle.js";
+import { projectElectronRuntimeStatus as projectRuntimeStatus } from "./runtime-status.js";
 import { StandaloneHostLifecycle } from "@open-design/standalone";
 import { StandaloneHostLifecycleLedger } from "@open-design/standalone";
 import {
@@ -98,16 +99,6 @@ type HostStatus = Readonly<{
 export function isElectronStandaloneScope(manifest: ElectronShellManifest, scope: Readonly<{ channel: string; namespace: string }>): boolean {
   return scope.channel === manifest.channel
     && (scope.namespace === manifest.namespace || scope.namespace === `${manifest.namespace}-headless`);
-}
-
-function projectRuntimeStatus(status: Awaited<ReturnType<StandaloneHostControlClient["status"]>>, bindingDigest: string, generationId: string): StandaloneRuntimeStatus {
-  return Object.freeze({
-    bindingDigest,
-    generationId,
-    instanceId: status.instanceId ?? `stopped-${status.fence}`,
-    references: status.references,
-    state: status.state,
-  });
 }
 
 function exactHostStatus(value: unknown, expected: Omit<HostStatus, "control" | "generationPid" | "hostPid">): value is HostStatus {
@@ -934,8 +925,19 @@ export function createElectronStandaloneAuthorityFactory(
             heartbeatTask = heartbeatTask.then(async () => { await activeHost.lifecycle.heartbeat(request.scope, attachment); }).catch(() => undefined);
           }, started.lease?.heartbeatIntervalMs ?? 5_000);
           heartbeat.unref();
+          const readRuntimeStatus = async (): Promise<StandaloneRuntimeStatus> => {
+            for (;;) {
+              if (closed != null || sealedRuntimeStatus != null) return (closed ?? sealedRuntimeStatus)!;
+              const observedHost = activeHost;
+              try {
+                const current = await observedHost.lifecycle.status(request.scope);
+                if (observedHost !== activeHost) continue;
+                return projectRuntimeStatus(current, observedHost.binding.digest, activeGeneration.id, attachment.id);
+              } catch (error) { if (observedHost === activeHost) throw error; }
+            }
+          };
           return Object.freeze({
-            async readStatus() { return closed ?? sealedRuntimeStatus ?? projectRuntimeStatus(await activeHost.lifecycle.status(request.scope), activeHost.binding.digest, activeGeneration.id); },
+            readStatus: readRuntimeStatus,
             async invoke(command: StandaloneRuntimeCommand) {
               if (sealedRuntimeStatus != null) throw new Error("Electron Standalone runtime is sealed for replacement");
               return await activeHost.lifecycle.invoke(command);
@@ -950,11 +952,14 @@ export function createElectronStandaloneAuthorityFactory(
                   return closed;
                 }
                 return await withElectronPhysicalResourceSetGuard(activeHost.resourceSet, async (guard) => {
-                  const released = await activeHost.lifecycle.release(request.scope, attachment.id);
+                  const current = await activeHost.lifecycle.status(request.scope);
+                  const ownGeneration = current.generationId === activeGeneration.id && current.bindingDigest === activeHost.binding.digest;
+                  const ownsAttachment = ownGeneration && current.occupants.some(({ attachmentId }) => attachmentId === attachment.id);
+                  const released = ownsAttachment ? await activeHost.lifecycle.release(request.scope, attachment.id) : current;
                   // Occupancy selects whether this caller may retire the set;
                   // only Sidecar's guarded retirement proves physical closure.
                   // Never kill a runtime retained by a sibling attachment.
-                  if (released.occupants.length === 0) {
+                  if (ownGeneration && released.occupants.length === 0) {
                     await guard.retire();
                     const continuation = new StandaloneHostLifecycle(request.scope, { statePort: lifecycleLedger });
                     const stopped = await continuation.status();
@@ -971,7 +976,7 @@ export function createElectronStandaloneAuthorityFactory(
               if (closed != null) return closed;
               if (sealedRuntimeStatus != null) return sealedRuntimeStatus;
               for (;;) {
-                const status = projectRuntimeStatus(await activeHost.lifecycle.status(request.scope), activeHost.binding.digest, activeGeneration.id);
+                const status = await readRuntimeStatus();
                 if (status.state !== "running") return status;
                 await new Promise((resolveWait) => setTimeout(resolveWait, 100));
               }

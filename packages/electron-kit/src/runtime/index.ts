@@ -65,6 +65,7 @@ import {
   createElectronRendererMountAcknowledgement,
 } from "./window/mount-acknowledgement.js";
 import { mountElectronRendererLease, replaceElectronRendererLease } from "./window/renderer-mount.js";
+import { observeElectronRuntimeTerminal } from "./session/terminal-observer.js";
 
 import { electronSplashHtml } from "./window/splash.js";
 
@@ -506,6 +507,12 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
     });
   };
   app.on("before-quit", beforeQuit);
+  void observeElectronRuntimeTerminal({
+    runtime: runtimeStandaloneHandle,
+    isClosing: () => closing,
+    async waitForRendererReplacement() { await rendererReplacement?.catch(() => undefined); },
+    onTerminal(observation) { context.log?.write("standalone.terminal", observation); app.quit(); },
+  }).catch((error: unknown) => { context.log?.write("standalone.observation.failed", { error }); app.quit(); });
   void observeElectronInstallerHandoff({
     afterRevision: runtimeUpdaterRevisionAtStart,
     isClosing: () => closing,
