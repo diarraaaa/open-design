@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol } from "electron";
 import {
+  canonicalJson,
   type GenerationRecord,
   type StandaloneGenerationBinding,
   type StandaloneHandoffAttachment,
@@ -33,11 +34,10 @@ export type {
 } from "../contracts/index.js";
 import { ElectronActivationAttempt } from "./session/activation.js";
 import { ElectronRuntimeLog } from "./session/logging.js";
-import { prepareElectronNamespacePaths, resolveElectronSessionNamespace } from "./session/namespace-paths.js";
+import { resolveElectronSessionNamespace } from "./session/namespace-paths.js";
 import { attachElectronProcessErrorHandlers } from "./session/process-errors.js";
 import { completeElectronShutdown } from "./session/shutdown.js";
 import {
-  claimElectronSingleInstanceLock,
   ElectronLaunchHandoffQueue,
   findElectronProtocolUrl,
   parseElectronInstallerReplacementData,
@@ -51,7 +51,7 @@ import {
   type ElectronWarmupRun,
   validateElectronRuntimeWarmupTopology,
 } from "./startup/warmup/index.js";
-import { applyElectronPreflight } from "./startup/preflight/index.js";
+import { loadElectronCarrierCapsule, prepareElectronCarrierIdentity } from "./startup/identity.js";
 import { ElectronStartupAttemptFence, type ElectronStartupSignal } from "./startup/attempt.js";
 import {
   completeElectronStartupCancellation,
@@ -124,14 +124,17 @@ async function resolveCarrierWithRecovery(input: Readonly<{
   }
 }
 
-async function runElectronShellSession(definition: ElectronShellDefinition, context: ElectronRuntimeContext): Promise<void> {
-  const manifest = validateElectronShellManifest(definition.manifest);
-  const preflight = applyElectronPreflight(app, definition.preflight);
-  const warmupTopology = validateElectronRuntimeWarmupTopology(definition.warmup);
-  const presentation = resolveElectronPresentationMode({ explicitHeadless: definition.headless });
+export type ElectronCarrierDefinition = Readonly<{
+  manifest: ElectronShellManifest;
+  preflight: ElectronShellDefinition["preflight"];
+  headless?: boolean;
+  loadCapsule(manifest: ElectronShellManifest): Promise<ElectronShellDefinition>;
+}>;
+
+async function runElectronShellSession(input: ElectronCarrierDefinition, context: ElectronRuntimeContext): Promise<void> {
+  const manifest = validateElectronShellManifest(input.manifest);
+  const presentation = resolveElectronPresentationMode({ explicitHeadless: input.headless });
   const sessionNamespace = resolveElectronSessionNamespace(manifest.namespace, presentation);
-  app.setName(manifest.productName);
-  protocol.registerSchemesAsPrivileged([{ scheme: manifest.protocol, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
   let rendererLease: ElectronRendererLease | null = null;
   let splash: BrowserWindow | null = null;
   const handoffs = new ElectronLaunchHandoffQueue(manifest.protocol);
@@ -174,11 +177,11 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
     handoffs.enqueue({ type: "focus", source: "app-activate" });
     focusElectronWindow(splash, presentation, "app-activate");
   });
-  const paths = await prepareElectronNamespacePaths(app, {
-    channel: manifest.channel,
-    namespace: sessionNamespace,
-  });
-  if (!await claimElectronSingleInstanceLock(app)) { app.quit(); return; }
+  const identity = await prepareElectronCarrierIdentity({ app, protocol, platform: process.platform,
+    productName: manifest.productName, scheme: manifest.protocol, channel: manifest.channel,
+    namespace: sessionNamespace, preflight: input.preflight, presentation });
+  if (identity == null) { app.quit(); return; }
+  const { paths, preflight } = identity;
   const runtimeRoot = paths.runtimeRoot;
   context.log = new ElectronRuntimeLog(runtimeRoot);
   const processErrors = attachElectronProcessErrorHandlers((event) => {
@@ -192,6 +195,12 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
     runtimeRoot,
     preflight,
   });
+  const definition = await loadElectronCarrierCapsule(app, () => input.loadCapsule(manifest));
+  if (canonicalJson(definition.manifest) !== canonicalJson(manifest) || canonicalJson(definition.preflight) !== canonicalJson(input.preflight)) {
+    throw new Error("Capsule cannot replace the established carrier identity or preflight");
+  }
+  context.log.write("capsule.definition.loaded", { pid: process.pid });
+  const warmupTopology = validateElectronRuntimeWarmupTopology(definition.warmup);
   const nodeLockPath = join(app.getAppPath(), "node-lock.json");
   const resourceRoot = app.isPackaged ? process.resourcesPath : app.getAppPath();
   const scope: StandaloneScope = { channel: manifest.channel, namespace: sessionNamespace };
@@ -606,7 +615,7 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
   if (Number.isFinite(smokeExitMs) && smokeExitMs > 0) setTimeout(() => app.quit(), smokeExitMs).unref();
 }
 
-export async function runElectronShell(definition: ElectronShellDefinition): Promise<void> {
+export async function runElectronCarrier(definition: ElectronCarrierDefinition): Promise<void> {
   const context: ElectronRuntimeContext = { activation: null, log: null, startup: null, startupQuit: null };
   try { await runElectronShellSession(definition, context); }
   catch (error) {

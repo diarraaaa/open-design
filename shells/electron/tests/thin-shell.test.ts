@@ -94,9 +94,13 @@ describe("Electron product shell", () => {
     const main = sources.find(({ name }) => name === "main.ts")!.source;
     const composition = sources.filter(({ name }) => name.startsWith("composition/"));
     const definition = sources.find(({ name }) => name === "composition/definition.ts")!.source;
-    expect(main).toContain('from "./composition/definition.js"');
+    expect(main).not.toContain('from "./composition/definition.js"');
+    expect(main).toContain('await import("./capsule.js")');
+    expect(main).toContain('runElectronCarrier');
+    expect(sources.find(({ name }) => name === "capsule.ts")!.source).toContain('from "./composition/definition.js"');
     expect(main).toContain('from "./adapters/standalone/electron-control.js"');
     expect(main).toContain('readFileSync(join(__dirname, "shell.json"');
+    expect(main).toContain('readFileSync(join(__dirname, "runtime.json"');
     expect(main).not.toMatch(/config\/|ElectronFixture|scheduleElectronInstallerHandoff/u);
     expect(definition).toContain("createElectronStandaloneAuthorityFactory");
     expect(definition).not.toContain("createElectronFixtureStandaloneAuthorityFactory");

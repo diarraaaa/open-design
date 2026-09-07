@@ -44,6 +44,8 @@ describe("Electron macOS runtime policy", () => {
       presentation: "headless",
     });
     expect(receipt.dockVisibility).toBe("hidden");
+    expect(receipt.activationPolicy).toBe("prohibited");
+    expect(setActivationPolicy).toHaveBeenCalledExactlyOnceWith("prohibited");
     expect(hide).toHaveBeenCalledOnce();
     expect(show).not.toHaveBeenCalled();
   });

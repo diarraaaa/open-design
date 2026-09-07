@@ -44,12 +44,13 @@ export async function applyElectronMacRuntimePolicy(input: Readonly<{
       pinning: policy.dock.pinning,
     });
   }
-  input.app.setActivationPolicy(policy.activationPolicy);
+  const activationPolicy = input.presentation === "headless" ? "prohibited" : policy.activationPolicy;
+  input.app.setActivationPolicy(activationPolicy);
   if (input.presentation === "headless") input.app.dock?.hide();
   else await input.app.dock?.show();
   return Object.freeze({
     applied: true,
-    activationPolicy: policy.activationPolicy,
+    activationPolicy,
     dockVisibility: input.presentation === "headless" ? policy.dock.headless : policy.dock.interactive,
     pinning: policy.dock.pinning,
   });

@@ -12,7 +12,7 @@ export type ElectronMacRuntimePolicy = Readonly<{
 
 export type ElectronMacRuntimePolicyReceipt = Readonly<{
   applied: boolean;
-  activationPolicy: "regular" | null;
+  activationPolicy: "regular" | "prohibited" | null;
   dockVisibility: "hidden" | "not-applicable" | "visible";
   pinning: "system-owned";
 }>;
