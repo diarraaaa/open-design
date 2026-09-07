@@ -4,6 +4,7 @@ export * from "./runtime/index.js";
 export * from "./runtime/startup/bootstrap/index.js";
 export * from "./runtime/startup/carrier/index.js";
 export * from "./runtime/startup/config.js";
+export * from "./runtime/startup/capsule.js";
 export * from "./runtime/startup/preflight/index.js";
 export * from "./runtime/startup/warmup/index.js";
 export * from "./update/installation/index.js";

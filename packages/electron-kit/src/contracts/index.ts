@@ -22,6 +22,7 @@ import type { ElectronMacRuntimePolicy } from "../platform/macos/contracts.js";
 import type { ElectronRendererRecoveryPolicy } from "../runtime/window/crash-recovery.js";
 
 export const ELECTRON_KIT_CONTRACT_VERSION = 1 as const;
+export * from "./capsule.js";
 
 export type ElectronShellManifest = Readonly<{
   schemaVersion: typeof ELECTRON_KIT_CONTRACT_VERSION;
