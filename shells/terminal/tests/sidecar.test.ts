@@ -177,10 +177,7 @@ describe("Terminal Sidecar refinement", () => {
       domain: "maintenance",
       operation: "sweep-if-idle",
       scope,
-    })).resolves.toMatchObject({ status: "deferred", reason: "occupied", occupants: expect.arrayContaining([
-      expect.objectContaining({ attachmentId: attachment.id }),
-      expect.objectContaining({ attachmentId: "terminal-concurrent" }),
-    ]) });
+    })).rejects.toThrow("invalid Terminal Sidecar request domain");
     const originalHost = await getSidecarStatus<any>(stamp, { generationPid });
     expect(originalHost).toMatchObject({ control: "ready", generationPid, hostPid: expect.any(Number), layout: config.layout });
     await invokeSidecar(stamp, STANDALONE_HOST_CONTROL_ACTION, {
@@ -202,7 +199,7 @@ describe("Terminal Sidecar refinement", () => {
       domain: "maintenance",
       operation: "sweep-if-idle",
       scope,
-    })).resolves.toMatchObject({ status: "complete" });
+    })).rejects.toThrow("invalid Terminal Sidecar request domain");
     const idle = await invokeSidecar<any>(stamp, STANDALONE_HOST_CONTROL_ACTION, {
       schemaVersion: 1,
       operation: "lifecycle.status", scope });

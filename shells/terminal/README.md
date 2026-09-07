@@ -129,9 +129,8 @@ host additionally exercises the complete Electron-facing multi-attachment
 shape, including cold-start progress, without introducing Web or daemon.
 
 Standalone owns the global mark/quarantine sweep and bounded asynchronous trash
-cleanup APIs. The Terminal Sidecar host only schedules them after the requested scope is
-idle. This keeps blob semantics and reclamation out of Closure while exercising
-the same maintenance boundary Electron can reuse.
+cleanup APIs. Terminal does not expose a private maintenance RPC. One scope's
+idle attachment count is not proof that the shared Store is safe to reclaim.
 
 Passing `--feedback <jsonl>` (`-Feedback` on PowerShell) records the complete
 Shell-to-Closure cold-start stream. Native Node verification is followed by

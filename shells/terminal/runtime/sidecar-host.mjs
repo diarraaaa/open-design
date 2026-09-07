@@ -8,7 +8,7 @@ import { bootstrapSidecarProcess, handoffCurrentSidecarGeneration, invokeSidecar
 const ACTION = "standalone.request.v1";
 const CONFIG_ENV = "OD_TERMINAL_SIDECAR_CONFIG_V1";
 const REQUEST_FIELDS = new Set([
-  "schemaVersion", "scope", "domain", "operation", "options",
+  "schemaVersion", "scope", "domain", "operation",
   "bindingDigest", "generationId",
 ]);
 
@@ -40,7 +40,6 @@ function readConfig() {
 class TerminalSidecarRuntime {
   constructor(config, standalone) {
     this.config = config;
-    this.standalone = standalone;
     this.scope = Object.freeze({ channel: config.channel, namespace: config.namespace });
     this.layout = standalone.validateStandaloneRuntimeLayout(config.layout);
     if (this.layout.resourceStoreRoot !== config.storeRoot) throw new Error("Terminal layout escaped its Store root");
@@ -82,7 +81,6 @@ class TerminalSidecarRuntime {
     this.assertScope(message.scope);
     if (Object.keys(message).some(key => !REQUEST_FIELDS.has(key))) throw new Error("Terminal Sidecar request contains unsupported fields");
     if (message.domain === "generation") return await this.generationRequest(message);
-    if (message.domain === "maintenance") return await this.maintenanceRequest(message);
     throw new Error("invalid Terminal Sidecar request domain");
   }
 
@@ -115,16 +113,6 @@ class TerminalSidecarRuntime {
     };
   }
 
-  async maintenanceRequest(message) {
-    if (message.operation !== "sweep-if-idle") {
-      throw new Error(`unsupported Terminal Sidecar maintenance operation: ${message.operation}`);
-    }
-    const status = await this.lifecycle.status();
-    if (status.references !== 0) return { status: "deferred", reason: "occupied", occupants: status.occupants };
-    const sweep = await this.standalone.sweepStandaloneStore(this.config.storeRoot);
-    const cleanup = await this.standalone.cleanupStandaloneTrash(this.config.storeRoot, message.options ?? {});
-    return { status: "complete", sweep, cleanup };
-  }
 }
 
 const config = readConfig();
