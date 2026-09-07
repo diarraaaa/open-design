@@ -327,6 +327,7 @@ import {
   shouldAdoptPersistedManualEditDocument,
   shouldFreezeManualEditDocumentIdentity,
 } from '../runtime/manual-edit-document-latch';
+import { manualEditTextSessionHasLiveDocument } from '../runtime/manual-edit-text-session';
 import {
   PRESENTATION_BACKDROP_DELAY_MS,
   presentationBackdropPhase,
@@ -9009,6 +9010,10 @@ function HtmlViewer({
   // resulting commit has been applied, so exit/dismiss/cancel never tear down
   // mid-round-trip and drop the final edit (the #3647 exit-path regression).
   const manualEditTextSessionIdRef = useRef<string | null>(null);
+  // The document that opened the inline edit. The session belief is only ever
+  // valid while this is still the document the host would post into; see
+  // `manualEditTextSessionHasLiveDocument`.
+  const manualEditTextSessionWindowRef = useRef<Window | null>(null);
   const manualEditTextSessionStartSequenceRef = useRef<number | null>(null);
   const manualEditTextFinishRef = useRef<((acknowledged?: boolean, sessionId?: string) => void) | null>(null);
   const manualEditTextCommitInFlightRef = useRef<Promise<unknown> | null>(null);
@@ -9099,6 +9104,7 @@ function HtmlViewer({
     manualEditLiveStylesRef.current.clear();
     manualEditPendingStyleRef.current = null;
     manualEditTextSessionIdRef.current = null;
+    manualEditTextSessionWindowRef.current = null;
     manualEditTextSessionStartSequenceRef.current = null;
     manualEditTextFinishRef.current = null;
     manualEditTextCommitInFlightRef.current = null;
@@ -12979,6 +12985,7 @@ function HtmlViewer({
       selectedManualEditTargetIdRef.current = null;
       manualEditSelectionDraftRef.current = null;
       manualEditTextSessionIdRef.current = null;
+      manualEditTextSessionWindowRef.current = null;
       manualEditTextSessionStartSequenceRef.current = null;
       manualEditTextFinishRef.current = null;
       manualEditTextCommitInFlightRef.current = null;
@@ -13086,11 +13093,16 @@ function HtmlViewer({
         const sessionId = String(data.id || '');
         if (data.active) {
           manualEditTextSessionIdRef.current = sessionId;
+          // Scope the belief to the document that opened it. Only that document
+          // can close the session, so a later teardown must not block on it once
+          // the document is gone.
+          manualEditTextSessionWindowRef.current = (ev.source as Window | null) ?? null;
           manualEditTextSessionStartSequenceRef.current = manualEditTextCommitSequenceRef.current;
           return;
         }
         if (manualEditTextSessionIdRef.current === sessionId) {
           manualEditTextSessionIdRef.current = null;
+          manualEditTextSessionWindowRef.current = null;
           manualEditTextSessionStartSequenceRef.current = null;
         }
         const pending = manualEditTextFinishRef.current;
@@ -13316,6 +13328,7 @@ function HtmlViewer({
           if ((acknowledged || relevantCommit)
             && manualEditTextSessionIdRef.current === sessionId) {
             manualEditTextSessionIdRef.current = null;
+            manualEditTextSessionWindowRef.current = null;
             manualEditTextSessionStartSequenceRef.current = null;
           }
           resolve(committed);
@@ -13336,7 +13349,25 @@ function HtmlViewer({
   // edit mode open with the error rather than tearing down through it (#4291).
   async function settlePendingManualEditCommit(commitActiveSession = true): Promise<boolean> {
     if (manualEditTextSessionIdRef.current) {
-      return finishManualEditTextSession(commitActiveSession);
+      if (manualEditTextSessionHasLiveDocument({
+        liveWindows: [
+          iframeRef.current?.contentWindow,
+          urlPreviewIframeRef.current?.contentWindow,
+          srcDocPreviewIframeRef.current?.contentWindow,
+        ],
+        sessionWindow: manualEditTextSessionWindowRef.current,
+      })) {
+        return finishManualEditTextSession(commitActiveSession);
+      }
+      // The document that owned the inline edit is gone, so no bridge will ever
+      // answer for it. Release the belief and settle on whatever that document
+      // already committed; blocking here would report "the pending edit failed"
+      // for an edit that was never pending, and every fail-closed caller —
+      // Save included — would abort without a write and without an error.
+      manualEditTextSessionIdRef.current = null;
+      manualEditTextSessionWindowRef.current = null;
+      manualEditTextSessionStartSequenceRef.current = null;
+      manualEditTextFinishRef.current = null;
     }
     const latestCommit = manualEditTextLatestCommitRef.current;
     if (latestCommit && latestCommit.result == null) {
@@ -13512,6 +13543,7 @@ function HtmlViewer({
     selectedManualEditTargetIdRef.current = null;
     manualEditSelectionDraftRef.current = null;
     manualEditTextSessionIdRef.current = null;
+    manualEditTextSessionWindowRef.current = null;
     manualEditTextSessionStartSequenceRef.current = null;
     setSelectedManualEditTarget(null);
     setManualEditPanelPosition(null);
