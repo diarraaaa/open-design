@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { bootstrapSidecarProcess, handoffCurrentSidecarGeneration, SidecarFactory } from "@open-design/sidecar";
+import { bootstrapSidecarProcess, handoffCurrentSidecarGeneration, invokeSidecar, SidecarFactory } from "@open-design/sidecar";
 
 const ACTION = "standalone.request.v1";
 const CONFIG_ENV = "OD_TERMINAL_SIDECAR_CONFIG_V1";
@@ -47,10 +47,17 @@ class TerminalSidecarRuntime {
     this.lifecycle = new standalone.StandaloneHostLifecycle(this.scope, {
       statePort: new standalone.StandaloneHostLifecycleLedger(config.storeRoot, this.scope),
     });
+    const updater = new standalone.StandaloneHostControlUpdater("electron", this.scope, (request) => invokeSidecar({
+      ...this.scope, source: "standalone", mode: "runtime", app: "electron-updater",
+    }, standalone.STANDALONE_HOST_CONTROL_ACTION, request, { timeoutMs: standalone.standaloneHostControlRequestTimeoutMs(request) }));
     this.control = new standalone.StandaloneHostRuntime({
       scope: this.scope,
       lifecycle: this.lifecycle,
-      capabilities: () => standalone.createStandaloneRuntimeLayoutCapabilityHandler({ layout: this.layout, scope: this.scope }),
+      updater: (shellType) => shellType === "electron" ? updater : undefined,
+      capabilities: () => standalone.createStandaloneShellCapabilityRouter([
+        standalone.createStandaloneRuntimeLayoutCapabilityHandler({ layout: this.layout, scope: this.scope }),
+        standalone.createStandaloneShellUpdaterCapabilityHandler(updater),
+      ]),
       resolveGeneration: async (binding) => {
         const expected = process.env.OD_TERMINAL_EXPECTED_BINDING_DIGEST;
         if (expected != null && expected !== binding.digest) throw new Error("Terminal Sidecar successor received another generation binding");
@@ -159,6 +166,7 @@ const client = SidecarFactory.create({
       return {
         bootstrapPid: Number.parseInt(process.env.OD_TERMINAL_BOOTSTRAP_PID ?? "0", 10) || null,
         control: "ready",
+        connection: standalone.createStandaloneHostConnection(active.scope, active.layout),
         dataRoot: client.resources.dataRoot,
         generationPid: client.resources.pid,
         hostPid: process.pid,

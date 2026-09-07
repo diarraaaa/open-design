@@ -1,5 +1,6 @@
 export * from "./protocol.js";
 export * from "./host-control.js";
+export * from "./host-connection.js";
 export * from "./host-control-client.js";
 export * from "./host-control-updater.js";
 export * from "./host-lifecycle.js";

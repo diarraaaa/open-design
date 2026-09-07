@@ -11,6 +11,7 @@ import {
 } from "@open-design/sidecar/authority";
 import {
   StandaloneHostRuntime,
+  createStandaloneHostConnection,
   StandaloneHostControlUpdater,
   createStandaloneRuntimeLayoutCapabilityHandler,
   createStandaloneShellCapabilityRouter,
@@ -141,6 +142,7 @@ export async function runElectronStandaloneHost(): Promise<void> {
       async status(active) {
         return Object.freeze({
           control: "ready",
+          connection: createStandaloneHostConnection(config.scope, config.layout),
           generationPid: client.resources.pid,
           hostPid: process.pid,
           hostSha256: config.hostSha256,

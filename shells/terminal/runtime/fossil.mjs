@@ -3,7 +3,7 @@ import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { convergeSidecarLaunch, getSidecarStatus, invokeSidecar, stopSidecar } from "@open-design/sidecar";
+import { convergeSidecarLaunch, getSidecarStatus, invokeSidecar, stopSidecars, withSidecarLifecycleLock } from "@open-design/sidecar";
 
 const requestPath = process.env.OD_TERMINAL_FOSSIL_REQUEST_V1;
 const resultPath = process.env.OD_TERMINAL_FOSSIL_RESULT_V1;
@@ -99,7 +99,13 @@ async function sidecarRequest(message) {
   });
 }
 
-async function convergeTerminalSidecar(request, installation) {
+function physicalResourceStamps(scope) {
+  return ["standalone", "daemon", "web", "electron-updater"].map((app) => Object.freeze({
+    channel: scope.channel, namespace: scope.namespace, source: "standalone", mode: "runtime", app,
+  }));
+}
+
+async function convergeTerminalSidecar(request, installation, guarded = false) {
   const stamp = Object.freeze({
     channel: request.channel,
     namespace: request.namespace,
@@ -131,11 +137,14 @@ async function convergeTerminalSidecar(request, installation) {
       existing?.control !== "ready"
       || existing.dataRoot !== config.storeRoot
       || existing.runtimeRoot !== runtimeRoot
-      || installation.standalone.canonicalJson(existing.layout) !== installation.standalone.canonicalJson(layout)
       || !Number.isSafeInteger(existing.generationPid)
       || !Number.isSafeInteger(existing.hostPid)
-      || !Number.isSafeInteger(existing.bootstrapPid)
     ) throw new Error("existing Terminal Sidecar differs from its launch contract");
+    try {
+      installation.standalone.validateStandaloneHostConnection(existing.connection, { scope: { channel: request.channel, namespace: request.namespace }, layout });
+    } catch (cause) {
+      throw new Error("existing Terminal Sidecar differs from its launch contract", { cause });
+    }
     activeSidecarStamp = stamp;
     return {
       description: {
@@ -154,6 +163,7 @@ async function convergeTerminalSidecar(request, installation) {
   } catch (error) {
     if (error instanceof Error && error.message === "existing Terminal Sidecar differs from its launch contract") throw error;
   }
+  if (!guarded) return await withSidecarLifecycleLock(physicalResourceStamps(request), () => convergeTerminalSidecar(request, installation, true));
   const converged = await convergeSidecarLaunch({
     args: [sidecarBootstrap],
     command: process.execPath,
@@ -267,8 +277,15 @@ async function ensureInstalledSeed(request, installation, store, keys, feedback)
 }
 
 async function execute(request, installation) {
+  if (["start", "stop", "apply-update", "apply-update-force"].includes(request.operation)) {
+    return await withSidecarLifecycleLock(physicalResourceStamps(request), () => executeOperation(request, installation, true));
+  }
+  return await executeOperation(request, installation, false);
+}
+
+async function executeOperation(request, installation, guarded) {
   if (request.operation === "probe") return { capabilities: installation.manifest.capabilities, channel: request.channel, namespace: request.namespace };
-  const sidecarConvergence = await convergeTerminalSidecar(request, installation);
+  const sidecarConvergence = await convergeTerminalSidecar(request, installation, guarded);
   const sidecarDescription = sidecarConvergence.description;
   let currentSidecarStatus = sidecarConvergence.status;
   const sidecar = () => Object.freeze({
@@ -338,7 +355,8 @@ async function execute(request, installation) {
   }
   if (request.operation === "stop") {
     const stopped = await launcher.stop();
-    const physical = await stopSidecar(activeSidecarStamp);
+    const physical = await stopSidecars(physicalResourceStamps(request).map((stamp) => ({ stamp })));
+    if (physical.remainingPids.length > 0) throw new Error("Terminal physical resource retirement left survivors");
     return { ...stopped, sidecar: { generationPid: sidecarDescription.resources.pid, remainingPids: physical.remainingPids } };
   }
   const source = request.operation === "prepare-update"

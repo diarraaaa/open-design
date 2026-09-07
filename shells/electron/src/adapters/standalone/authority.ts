@@ -7,6 +7,7 @@ import {
 } from "@open-design/sidecar/authority";
 import {
   canonicalJson,
+  validateStandaloneHostConnection,
   createStandaloneGenerationBinding,
   resolveStandaloneRuntimeLayout,
   sha256Hex,
@@ -211,7 +212,7 @@ export function createElectronStandaloneAuthorityFactory(
       const installation = await loadElectronStandaloneInstallation({ resourceRoot, channel: request.scope.channel, target: resolveElectronStandaloneTarget() });
       const channelHeadUrl = options.channelHeadUrl ?? installation.declaration.update.channelHeadUrl;
       const storeRoot = join(runtimeRoot, "standalone-store");
-      const sidecarRuntimeRoot = join(runtimeRoot, "standalone-sidecar");
+      const sidecarRuntimeRoot = join(storeRoot, "sidecar-runtime");
       const layout = resolveStandaloneRuntimeLayout({
         namespaceRoot,
         resourceStoreRoot: storeRoot,
@@ -263,7 +264,15 @@ export function createElectronStandaloneAuthorityFactory(
         shell: request.shell,
         channelHeadUrl,
       });
-      const launchHost = async (nextBinding: StandaloneGenerationBinding) => {
+      const compatibleHost = (value: unknown) => {
+        if (value == null || typeof value !== "object") throw new Error("host connection is absent");
+        const status = value as Partial<HostStatus> & { connection?: unknown };
+        if (status.control !== "ready" || status.dataRoot !== storeRoot || status.runtimeRoot !== sidecarRuntimeRoot
+          || !Number.isSafeInteger(status.generationPid) || !Number.isSafeInteger(status.hostPid)) throw new Error("host physical scope differs");
+        validateStandaloneHostConnection(status.connection, { scope: request.scope, layout });
+        return status.generationPid!;
+      };
+      const launchHost = async (nextBinding: StandaloneGenerationBinding, reuse?: number) => {
         const resourceSet = bindElectronPhysicalResourceSet(resources, nextBinding);
         const stamp = resourceSet.resources.find(({ id }) => id === runtimeResource.id)!.stamp;
         const providerStamp = resourceSet.resources.find(({ id }) => id === "electron-updater")?.stamp;
@@ -283,16 +292,22 @@ export function createElectronStandaloneAuthorityFactory(
           supervisorSha256: installation.declaration.supervisor.sha256, resourceRoot: resolve(resourceRoot),
           dataRoot: storeRoot, runtimeRoot: providerConfig.runtimeRoot, shell: request.shell,
         })) throw new Error("Electron updater provider escaped its installed launch contract");
-        const converged = await convergeSidecarLaunch({
-          args: [installation.hostPath],
-          command: officialNodeExecutablePath,
-          cwd: resourceRoot,
-          env: { ...process.env, [ELECTRON_STANDALONE_HOST_CONFIG_ENV]: JSON.stringify(hostConfig) },
-          resources: { dataRoot: storeRoot, ownerPid: null, port: 0, runtimeRoot: sidecarRuntimeRoot },
-          stamp,
-        });
-        const status = await getSidecarStatus<unknown>(stamp, { generationPid: converged.description.resources.pid });
-        if (!exactHostStatus(status, hostExpected)) throw new Error("Electron Standalone Sidecar host escaped its installed launch contract");
+        if (reuse == null) {
+          const converged = await convergeSidecarLaunch({
+            args: [installation.hostPath],
+            command: officialNodeExecutablePath,
+            cwd: resourceRoot,
+            env: { ...process.env, [ELECTRON_STANDALONE_HOST_CONFIG_ENV]: JSON.stringify(hostConfig) },
+            resources: { dataRoot: storeRoot, ownerPid: null, port: 0, runtimeRoot: sidecarRuntimeRoot },
+            stamp,
+          });
+          const status = await getSidecarStatus<unknown>(stamp, { generationPid: converged.description.resources.pid });
+          if (!exactHostStatus(status, hostExpected)) throw new Error("Electron Standalone Sidecar host escaped its installed launch contract");
+        } else {
+          // Provider convergence must not turn an observed host into an
+          // unobserved replacement while the joining Shell is preparing.
+          compatibleHost(await getSidecarStatus(stamp, { generationPid: reuse }));
+        }
         const transport = createStandaloneHostControlTransport(stamp);
         return Object.freeze({
           binding: nextBinding,
@@ -311,14 +326,19 @@ export function createElectronStandaloneAuthorityFactory(
         // its entire process lifetime. Once it has no logical references it
         // must be retired before a later cold start, otherwise a newly
         // installed generation can never be selected in this namespace.
+        let reuse: number | undefined;
         if (existing != null) {
           const idle = hostHasNoLogicalReferences(existing);
-          if (!exactHostStatus(existing, hostExpected) && !idle) {
-            throw new Error("occupied incompatible Standalone host requires an explicit guarded transition");
+          if (!idle) {
+            try {
+              reuse = compatibleHost(existing);
+            } catch (cause) {
+              throw new Error("occupied incompatible Standalone host requires an explicit guarded transition", { cause });
+            }
           }
           if (idle) await guard.retire();
         }
-        activeHost = await launchHost(binding);
+        activeHost = await launchHost(binding, reuse);
       });
       feedback.emit({ phase: "generation-prepared", state: "complete", generationId: generation.id });
       let activeGeneration = generation;
