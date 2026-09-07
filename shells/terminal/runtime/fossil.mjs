@@ -377,15 +377,84 @@ async function executeOperation(request, installation, guarded) {
     // compatibility requirement without manufacturing a candidate or success.
     return installation.closure.prepareClosureShellUpdate({ requirement: preparation.requirement, shell, updater: null });
   }
-  const prepared = await store.preparedGeneration();
-  const currentLifecycle = await lifecycle.status({ channel: request.channel, namespace: request.namespace });
-  if (prepared != null && currentLifecycle.state === "running" && currentLifecycle.references === 0) {
-    const binding = standalone.createStandaloneGenerationBinding(prepared, { channel: request.channel, namespace: request.namespace });
-    if (currentLifecycle.bindingDigest !== binding.digest) {
-      await handoffTerminalSidecarGeneration(binding, sidecarConvergence);
+  if (!guarded) throw new Error("Terminal content update requires the complete physical resource guard");
+  const scope = { channel: request.channel, namespace: request.namespace };
+  const ledger = new standalone.StandaloneHostLifecycleLedger(storeRoot, scope);
+  const continuation = new standalone.StandaloneHostLifecycle(scope, { statePort: ledger });
+  let retired = false;
+  let hostAvailable = true;
+  const retire = async () => {
+    const physical = await stopSidecars(physicalResourceStamps(request).map((stamp) => ({ stamp })));
+    if (physical.remainingPids.length > 0) throw new Error("Terminal content retirement left physical survivors");
+    retired = true;
+    hostAvailable = false;
+  };
+  const updateLifecycle = {
+    start: async () => { throw new Error("Terminal content restart requires a bound transition"); },
+    status: (scope) => hostAvailable ? lifecycle.status(scope) : continuation.status(),
+    awaitReady: (scope, readiness) => lifecycle.awaitReady(scope, readiness),
+    heartbeat: (scope, attachment) => lifecycle.heartbeat(scope, attachment),
+    release: (scope, id) => lifecycle.release(scope, id),
+    stop: (scope, fence) => hostAvailable ? lifecycle.stop(scope, fence) : continuation.stop(fence),
+    async beginTransition(scope, kind, options) {
+      // The live host owns all writes until the complete physical set retires.
+      const acquired = await lifecycle.beginTransition(scope, kind, options);
+      if (acquired.state === "blocked") return acquired;
+      const live = acquired.transition;
+      let sealed = null;
+      return {
+        state: "acquired",
+        transition: {
+          attemptId: live.attemptId,
+          get fence() { return sealed?.fence ?? live.fence; },
+          get expiresAt() { return sealed?.expiresAt ?? live.expiresAt; },
+          heartbeatIntervalMs: live.heartbeatIntervalMs,
+          occupants: live.occupants,
+          get phase() { return sealed?.phase ?? live.phase; },
+          async renew() {
+            if (sealed == null) await live.renew();
+            else sealed = await continuation.renewTransition(sealed.token, sealed.fence);
+          },
+          async release() {
+            if (sealed == null) await live.release();
+            else await continuation.releaseTransition(sealed.token, sealed.fence);
+          },
+          async forceStop() {
+            await retire();
+            sealed = await continuation.forceStopTransition(live.attemptId, sealed?.fence ?? live.fence);
+          },
+          async completeBoundStart(generation, attachment, binding) {
+            if (sealed == null) throw new Error("Terminal content restart requires physical retirement and a sealed transition");
+            await convergeTerminalSidecar(request, installation, true);
+            hostAvailable = true;
+            return await lifecycle.completeTransitionStart(sealed.token, sealed.fence, generation, attachment, binding);
+          },
+        },
+      };
+    },
+  };
+  const updateLauncher = new standalone.VersionedLauncher(store, updateLifecycle, shell, request.attachmentId ?? "terminal-control", feedback);
+  let result;
+  try {
+    result = await updater.applyNow(updateLauncher, { force: request.operation === "apply-update-force" });
+  } catch (error) {
+    if (!retired) throw error;
+    // Never leave a failed replacement alive or silently reopen its lifecycle.
+    // Store owns attempt rollback; this adapter preserves a sealed recovery stop.
+    try {
+      await retire();
+      const state = await ledger.readOrInitial();
+      const recovery = await continuation.beginTransition("content-restart", {
+        ...(state.transition == null ? {} : { attemptId: state.transition.token }),
+        force: true,
+      });
+      if (recovery.state !== "acquired") throw new Error("Terminal failed update could not retain its recovery transition");
+      await continuation.forceStopTransition(recovery.transition.token, recovery.transition.fence);
+    } catch (recoveryError) {
+      throw new AggregateError([error, recoveryError], "Terminal content update and physical recovery sealing failed");
     }
+    throw error;
   }
-  const result = await updater.applyNow(launcher, { force: request.operation === "apply-update-force" });
   if (result.status !== "applied") return result;
   return { ...result, lifecycle: { ...result.lifecycle, attachmentCapability: lifecycle.exportAttachmentCredential(request.attachmentId ?? "terminal-control").attachmentCapability } };
 }

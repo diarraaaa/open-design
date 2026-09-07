@@ -128,13 +128,13 @@ function releaseDocuments(root: string, closure: Uint8Array, launcher: Uint8Arra
   const keys = generateKeyPairSync("ed25519");
   const signer = { keyId: "terminal-e2e", privateKey: keys.privateKey };
   writeFileSync(join(root, "trust.json"), canonicalJson({ schemaVersion: 1, keys: [{ keyId: signer.keyId, publicKey: keys.publicKey.export({ type: "spki", format: "pem" }) }] }));
-  const create = (channel: string, releaseVersion: string, minVersion: string, artifactBytes: Uint8Array) => {
+  const create = (channel: string, releaseVersion: string, minVersion: string, artifactBytes: Uint8Array, launcherBytes = launcher) => {
     const artifactFile = join(root, `${releaseVersion}-closure.mjs`);
     writeFileSync(artifactFile, artifactBytes);
     const artifactSha256 = sha256Hex(artifactBytes);
     const launcherFile = join(root, `${releaseVersion}-standalone-launcher.mjs`);
-    writeFileSync(launcherFile, launcher);
-    const launcherSha256 = sha256Hex(launcher);
+    writeFileSync(launcherFile, launcherBytes);
+    const launcherSha256 = sha256Hex(launcherBytes);
     const metadata: StandaloneMetadata = {
       schemaVersion: 4,
       channel,
@@ -144,7 +144,7 @@ function releaseDocuments(root: string, closure: Uint8Array, launcher: Uint8Arra
       publishedAt: "2026-08-24T00:00:00.000Z",
       blobs: {
         [artifactSha256]: { sha256: artifactSha256, size: artifactBytes.byteLength, mediaType: "text/javascript", sources: [{ kind: "remote", url: `${baseUrl}/${encodeURIComponent(basename(artifactFile))}` }] },
-        [launcherSha256]: { sha256: launcherSha256, size: launcher.byteLength, mediaType: "text/javascript", sources: [{ kind: "remote", url: `${baseUrl}/${encodeURIComponent(basename(launcherFile))}` }] },
+        [launcherSha256]: { sha256: launcherSha256, size: launcherBytes.byteLength, mediaType: "text/javascript", sources: [{ kind: "remote", url: `${baseUrl}/${encodeURIComponent(basename(launcherFile))}` }] },
       },
       resources: [
         { id: "standalone-launcher", component: "standalone.launcher", blob: launcherSha256, sync: true, materialization: { type: "file", entrypoint: "launcher.mjs" } },
@@ -179,12 +179,14 @@ function releaseDocuments(root: string, closure: Uint8Array, launcher: Uint8Arra
     beta2: create("somechan", "0.1.0-somechan.2", "0.1.0", beta2),
     beta3: create("somechan", "0.1.0-somechan.3", "0.2.0", beta3),
     preview1: create("somepreview", "0.1.0-somepreview.1", "0.1.0", preview1),
+    previewFailed: create("somepreview", "0.1.0-somepreview.2", "0.1.0", preview1,
+      Buffer.from('export async function standaloneGenerationHandoff() { throw new Error("injected Terminal candidate startup failure"); }\n')),
     latestUrls: {
       somechan: `${baseUrl}/somechan/latest/channel-head.json`,
       somepreview: `${baseUrl}/somepreview/latest/channel-head.json`,
     },
   };
-  for (const release of [releases.beta1, releases.beta2, releases.beta3, releases.preview1]) {
+  for (const release of [releases.beta1, releases.beta2, releases.beta3, releases.preview1, releases.previewFailed]) {
     publishFixtureFile(baseUrl, release.artifactFile);
     publishFixtureFile(baseUrl, release.launcherFile);
     publishFixtureFile(baseUrl, release.metadataFile);
@@ -254,18 +256,19 @@ export function verifyExactLifecycle(root: string, store: string, terminal: Term
   expect(existsSync(join(legacyUpdaterRoot, "shell-updater.json"))).toBe(false);
   expect(existsSync(join(legacyUpdaterRoot, "shell-candidate.json"))).toBe(false);
   releases.promote(releases.beta2);
+  const updateOccupant = terminal(root, store, "somechan", "shared", "start", { attachmentId: "update-occupant" });
   expect(terminal(root, store, "somechan", "shared", "prepare-update", { channelHeadUrl: releases.latestUrls.somechan, activationPolicy: "authorize-silent", feedbackFile }).result).toMatchObject({ status: "prepared", authorized: true });
   expect(readFileSync(join(store, "blobs", "sha256", releases.beta2.artifactSha256))).toEqual(readFileSync(releases.beta2.artifactFile));
   expect(readFileSync(join(store, "blobs", "sha256", releases.beta2.launcherSha256))).toEqual(readFileSync(releases.beta2.launcherFile));
-  const applied = terminal(root, store, "somechan", "shared", "apply-update");
+  expect(terminal(root, store, "somechan", "shared", "apply-update").result).toMatchObject({ status: "blocked", reason: "occupied" });
+  const applied = terminal(root, store, "somechan", "shared", "apply-update-force");
   expect(applied.result).toMatchObject({ status: "applied", lifecycle: { state: "running" } });
   expect(applied.result.lifecycle.generationId).not.toBe(first.result.generationId);
   const handedOff = terminal(root, store, "somechan", "shared", "status");
   expect(handedOff.result.sidecar).toMatchObject({
-    generationPid: first.result.sidecar.generationPid,
-    previousHostPid: reattached.result.sidecar.hostPid,
     status: "ready",
   });
+  expect(handedOff.result.sidecar.generationPid).not.toBe(updateOccupant.result.sidecar.generationPid);
   expect(handedOff.result.sidecar.hostPid).not.toBe(reattached.result.sidecar.hostPid);
   expect(terminal(root, store, "somechan", "shared", "stop").result.state).toBe("stopped");
   releases.promote(releases.beta3);
@@ -277,6 +280,11 @@ export function verifyExactLifecycle(root: string, store: string, terminal: Term
   releases.promote(releases.preview1);
   expect(terminal(root, store, "somepreview", "shared", "prepare-update", { channelHeadUrl: releases.latestUrls.somepreview, activationPolicy: "authorize-user" }).result).toMatchObject({ status: "prepared", authorized: true });
   expect(terminal(root, store, "somepreview", "shared", "apply-update").result).toMatchObject({ status: "applied", lifecycle: { state: "running", scope: { channel: "somepreview", namespace: "shared" } } });
+  releases.promote(releases.previewFailed);
+  expect(terminal(root, store, "somepreview", "shared", "prepare-update", { channelHeadUrl: releases.latestUrls.somepreview, activationPolicy: "observe" }).result.status).toBe("prepared");
+  expect(() => terminal(root, store, "somepreview", "shared", "apply-update-force")).toThrow("injected Terminal candidate startup failure");
+  const failedLedger = JSON.parse(readFileSync(join(store, "channels", "somepreview", "namespaces", "shared", "host-lifecycle.json"), "utf8"));
+  expect(failedLedger).toMatchObject({ state: "stopped", attachments: [], transition: { kind: "content-restart", phase: "stopped-sealed" } });
   const feedback = readFileSync(feedbackFile, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
   const phases = feedback.map((event) => event.phase);
   expect(phases).toContain("node-verification");
