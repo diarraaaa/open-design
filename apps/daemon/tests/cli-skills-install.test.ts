@@ -44,7 +44,9 @@ describe('od skill CLI', () => {
         });
         res.setHeader('content-type', 'application/json');
         if (req.method === 'GET') {
-          if (req.url === `/api/skills/${completeSkill.id}`) {
+          if (req.url === '/api/skills') {
+            res.end(JSON.stringify({ skills: [completeSkill] }));
+          } else if (req.url === `/api/skills/${completeSkill.id}`) {
             res.end(JSON.stringify(completeSkill));
           } else {
             res.statusCode = 404;
@@ -184,6 +186,8 @@ describe('od skill CLI', () => {
   });
 
   it.each([
+    ['list', ['list']],
+    ['show', ['show', 'complete-skill']],
     ['install', ['install', 'github:owner/skill-repo']],
     ['uninstall', ['uninstall', 'remote-skill']],
   ])('sends the exact workspace pair for skill %s', async (_label, command) => {
@@ -208,6 +212,8 @@ describe('od skill CLI', () => {
   });
 
   it.each([
+    ['list', ['list']],
+    ['show', ['show', 'complete-skill']],
     ['install', ['install', 'github:owner/skill-repo']],
     ['uninstall', ['uninstall', 'remote-skill']],
   ])('rejects an incomplete workspace pair before skill %s', async (_label, command) => {
