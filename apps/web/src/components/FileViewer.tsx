@@ -322,7 +322,11 @@ import {
 } from '../edit-mode/source-patches';
 import { MANUAL_EDIT_STYLE_PROPS, type ManualEditBridgeMessage, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
-import { shouldAdoptPersistedManualEditDocument } from '../runtime/manual-edit-document-latch';
+import {
+  canArmPersistedManualEditDocument,
+  shouldAdoptPersistedManualEditDocument,
+  shouldFreezeManualEditDocumentIdentity,
+} from '../runtime/manual-edit-document-latch';
 import {
   PRESENTATION_BACKDROP_DELAY_MS,
   presentationBackdropPhase,
@@ -8347,6 +8351,21 @@ function HtmlViewer({
     sourceFingerprint: string;
     reloadKey: number;
   } | null>(null);
+  // Sticky for the length of one Manual Edit session: at least one persisted
+  // patch could not be mirrored into the live document, so the document on
+  // screen is no longer known to equal any saved source. Both the retention
+  // latch and the identity freeze read it, because both are claims about a
+  // document the bridge is keeping current — and neither claim survives a save
+  // the bridge did not carry. Reset on the session boundary below.
+  const manualEditLiveDocumentDivergedRef = useRef(false);
+  const manualEditSessionActive = manualEditMode || manualEditSrcDocActive;
+  useEffect(() => {
+    // Divergence belongs to one editing session. This runs after the render
+    // that closes the session, so that render still sees the stale document
+    // and takes the ordinary replacement path; the next session then starts
+    // from a document the bridge is free to keep current again.
+    manualEditLiveDocumentDivergedRef.current = false;
+  }, [manualEditSessionActive]);
   // Source snapshot frozen while a non-edit annotation pass (Mark/Draw,
   // Comment, Inspect) is open. The file-watcher live-reload (chokidar →
   // filesRefresh → preview refresh) would otherwise re-render the iframe
@@ -8781,6 +8800,7 @@ function HtmlViewer({
     manualEditUrlStandbyReadyRef.current = 0;
     manualEditUrlStandbySourceFingerprintRef.current = null;
     manualEditPersistedDocumentRef.current = null;
+    manualEditLiveDocumentDivergedRef.current = false;
     manualEditLiveStylesRef.current.clear();
     previewRuntimeStateRef.current = null;
     previewRuntimeStateRestoreIdRef.current = null;
@@ -9572,11 +9592,12 @@ function HtmlViewer({
   });
   if (
     previewRuntimeRevisionIdentityRef.current.ownerKey !== previewRuntimeOwnerKey
-    || (
-      !manualEditMode
-      && !manualEditSrcDocActive
-      && !previewRuntimeCanAdoptPersistedManualEditDocument
-    )
+    || !shouldFreezeManualEditDocumentIdentity({
+      manualEditMode,
+      manualEditSrcDocActive,
+      canAdoptPersistedDocument: previewRuntimeCanAdoptPersistedManualEditDocument,
+      liveDocumentDiverged: manualEditLiveDocumentDivergedRef.current,
+    })
   ) {
     previewRuntimeRevisionIdentityRef.current = {
       ownerKey: previewRuntimeOwnerKey,
@@ -13563,6 +13584,15 @@ function HtmlViewer({
         ));
     }
     if (!liveDocumentMatchesSavedSource) {
+      // Nothing carried these bytes into the document. Remember that for the
+      // rest of the session: a later patch that does mirror can only vouch for
+      // its own element, never for what this one left stale.
+      manualEditLiveDocumentDivergedRef.current = true;
+    }
+    if (!canArmPersistedManualEditDocument({
+      patchMirroredToLiveDocument: liveDocumentMatchesSavedSource,
+      liveDocumentDiverged: manualEditLiveDocumentDivergedRef.current,
+    })) {
       manualEditPersistedDocumentRef.current = null;
       return;
     }
