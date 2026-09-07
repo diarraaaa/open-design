@@ -266,6 +266,7 @@ import {
 } from './runtimes/models.js';
 import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
 import { withAcpHandshakeFailureGuidance } from './runtimes/acp-handshake-failure.js';
+import { withAcpServiceFailureCode } from './runtimes/acp-service-failure.js';
 import { preflightCodexDefaultModel } from './runtimes/codex-model-preflight.js';
 import { preparePromptFileForAgent } from './runtimes/prompt-file.js';
 import { TerminalControlSequenceStripper } from './runtimes/terminal-control.js';
@@ -15472,10 +15473,20 @@ export async function startServer({
             // `run.error` out of it, and the close handler below returns on
             // `hasFatalError()` before any later rewrite can run. Explain a
             // handshake rejection here or nowhere.
-            send(event, withAcpHandshakeFailureGuidance(
+            //
+            // …and name its model-service class here or nowhere, for the same
+            // reason. `fail()` emits either a bare `{ message }` or an
+            // `AGENT_EXECUTION_FAILED` envelope, so without this the nine
+            // acp-json-rpc runtimes reported a provider outage, a throttle and a
+            // signed-out CLI under one opaque code, while the json-event-stream
+            // and Claude paths below/above already ran the same classifier.
+            // Order matters: the handshake verdict is stamped first and
+            // `withAcpServiceFailureCode` never overwrites a code that is
+            // already specific.
+            send(event, withAcpServiceFailureCode(withAcpHandshakeFailureGuidance(
               data,
               agentFailureIdentity(def),
-            ));
+            )));
             return;
           }
           send(event, data);
