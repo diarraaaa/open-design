@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildElectronStandaloneAuthority } from "../scripts/build-authority.ts";
+import { buildElectronStandaloneAuthority } from "@/adapters/standalone/build.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true }))); });
@@ -19,5 +19,8 @@ describe("Electron Standalone authority build", () => {
     expect(host).toContain("standalone.host.control.v1");
     expect(supervisor).toContain("sidecar supervisor failed to spawn target");
     expect(supervisor).not.toContain('from "@open-design/platform"');
+    expect(await readFile(result.supervisor.path)).toEqual(
+      await readFile(new URL(import.meta.resolve("@open-design/sidecar/resources/supervisor.mjs"))),
+    );
   });
 });

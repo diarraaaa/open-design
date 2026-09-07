@@ -8,6 +8,7 @@ Follow the root `AGENTS.md` first. This file only records module-level boundarie
 - `pnpm tools-dev` exposes `desktop` as the public selector for the integrated `shells/electron` stack; its internal typed identity is `electron`.
 - `tools-dev` invokes only the typed lifecycle adapter under `shells/electron/scripts`; it does not import electron-kit or launch an app-owned Electron runtime.
 - `pnpm tools-dev run web` runs foreground daemon + web for the Playwright webServer flow.
+- `pnpm tools-dev prepare closure --output <directory>` prepares development-only references to already-built daemon/Web outputs and emits `resource-receipt.json` for `tools-serve --resource-receipt`. These local references are not self-contained distribution artifacts and must never be published. Resource production is not an Electron Shell responsibility.
 - `pnpm tools-dev inspect desktop status` projects the Electron Shell status through its typed adapter.
 - `tools/pack` provides `@open-design/tools-pack` and the `tools-pack` bin. This PR delivers only the macOS build/install/start/stop/logs/uninstall/cleanup/inspect surface through typed `shells/electron/scripts` adapters.
 - `tools/serve` provides `@open-design/tools-serve` and the `tools-serve` bin. It owns local fixture services such as `tools-serve start updater`.

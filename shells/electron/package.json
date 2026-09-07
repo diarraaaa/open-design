@@ -33,8 +33,7 @@
     "@open-design/electron-kit": "workspace:*",
     "@open-design/sidecar": "workspace:*",
     "@open-design/sidecar-proto": "workspace:*",
-    "@open-design/standalone": "workspace:*",
-    "jszip": "3.10.1"
+    "@open-design/standalone": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.12.2",

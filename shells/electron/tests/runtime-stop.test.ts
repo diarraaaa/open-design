@@ -3,7 +3,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 const sidecar = vi.hoisted(() => ({ stop: vi.fn(), find: vi.fn(), status: vi.fn() }));
 vi.mock("@open-design/sidecar", () => ({ stopSidecar: sidecar.stop, findSidecarProcesses: sidecar.find, getSidecarStatus: sidecar.status }));
 import { executeElectronRuntimeLifecycle } from "../scripts/runtime-lifecycle.ts";
-import { electronGracefulStopOptions } from "../scripts/shutdown-policy.ts";
+import { executeElectronDevLifecycle } from "../scripts/dev-lifecycle.ts";
+import { electronGracefulStopOptions } from "@/adapters/standalone/observation.js";
 import { standaloneHostControlRequestTimeoutMs } from "@open-design/standalone";
 
 beforeEach(() => {
@@ -30,4 +31,12 @@ it("reports an orphaned Closure resource even when the host has already stopped"
   const receipt = await executeElectronRuntimeLifecycle({ schemaVersion: 1, operation: "electron.runtime.stop", channel: "betahyx", namespace: "stop-test", controlRuntimeRoot: "/control" });
   expect(receipt).toMatchObject({ remainingPids: [73] });
   expect(sidecar.stop).toHaveBeenCalledOnce();
+});
+
+it("keeps dev stop partial when an orphan survives Electron shutdown", async () => {
+  sidecar.find.mockImplementation(async ({ app }) => app === "electron-updater" ? [{ pid: 73 }] : []);
+  const receipt = await executeElectronDevLifecycle({ schemaVersion: 1, operation: "electron.dev.stop", channel: "dev", namespace: "stop-test", controlRuntimeRoot: "/control" });
+  expect(receipt).toMatchObject({ stopped: { remainingPids: [73] } });
+  expect(sidecar.stop).toHaveBeenCalledExactlyOnceWith({ app: "electron", channel: "dev", mode: "dev", namespace: "stop-test", source: "tools-dev" }, electronGracefulStopOptions);
+  expect(sidecar.find).toHaveBeenCalledTimes(4);
 });

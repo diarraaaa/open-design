@@ -5,6 +5,7 @@ import { createElectronContractInvocationExpression } from "@open-design/electro
 
 import { parseElectronCdpActivePort, type ElectronCdpDiscovery } from "../runtime/session/cdp.js";
 import { resolveElectronNamespacePaths, resolveElectronSessionNamespace } from "../runtime/session/namespace-paths.js";
+import { listElectronCdpTargets } from "./inspection.js";
 
 type JsonObject = Record<string, any>;
 
@@ -37,12 +38,9 @@ async function waitForDiscovery(sessionDataRoot: string, deadline: number): Prom
 async function pageWebSocketUrl(discoveryUrl: string, deadline: number): Promise<string> {
   for (;;) {
     try {
-      const response = await fetch(`${discoveryUrl}/json/list`, { redirect: "error", signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
-      if (response.ok) {
-        const targets = await response.json() as JsonObject[];
-        const page = targets.find((target) => target.type === "page" && typeof target.webSocketDebuggerUrl === "string");
-        if (page != null) return page.webSocketDebuggerUrl;
-      }
+      const targets = await listElectronCdpTargets(discoveryUrl, AbortSignal.timeout(Math.max(1, deadline - Date.now())));
+      const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl != null);
+      if (page?.webSocketDebuggerUrl != null) return page.webSocketDebuggerUrl;
     } catch { /* Chromium may still be publishing its first page target. */ }
     if (Date.now() >= deadline) throw new Error("Electron CDP page discovery timed out");
     await new Promise((done) => setTimeout(done, 100));

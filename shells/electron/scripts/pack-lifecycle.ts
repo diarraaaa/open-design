@@ -7,7 +7,7 @@ import { packElectronShell } from "@open-design/electron-kit/pack";
 import { validateElectronShellManifest, type ElectronShellManifest } from "@open-design/electron-kit/contracts";
 import { resolveElectronStandaloneTarget } from "../src/adapters/standalone/installation.ts";
 import { createElectronReleaseManifest, type ElectronReleaseIdentityRegistry } from "../src/composition/release-identity.ts";
-import { loadElectronStandaloneAuthorityResources } from "./build-authority.ts";
+import { loadElectronStandaloneAuthorityResources } from "../src/adapters/standalone/installation.ts";
 import { materializeElectronDevInstallation } from "./dev-installation.ts";
 
 export type ElectronPackRequest = Readonly<{

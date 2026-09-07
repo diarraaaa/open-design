@@ -34,6 +34,7 @@ export function createElectronShellDefinition(installedManifest: ElectronShellMa
     warmup: runtimeConfig.warmup,
     warmupExecutors: assertShellWarmupBindings(runtimeConfig.warmup, renderer.warmupExecutors),
     renderer: renderer.renderer,
+    rendererRecovery: runtime.rendererRecovery,
     actions: Object.freeze({
       observeCommitted: createWindowsCommittedObserver(
         shellManifest,

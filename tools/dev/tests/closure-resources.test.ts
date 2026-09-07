@@ -3,15 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import JSZip from "jszip";
-import { afterEach, describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import { afterEach, describe, it } from "node:test";
+import { createHash } from "node:crypto";
 
-import { buildElectronDevClosureResources } from "../scripts/dev-closure-resources.ts";
+import { buildDevClosureResources } from "../src/closure-resources.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true }))); });
 
-describe("Electron dev Closure resources", () => {
-  it("builds signed thin adapters without copying mutable workspace payloads", async () => {
+describe("tools-dev Closure fixture resources", () => {
+  it("describes local producer references with a standard fixture receipt", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "electron-dev-closure-workspace-"));
     roots.push(workspaceRoot);
     const daemonEntry = join(workspaceRoot, "apps", "daemon", "dist", "sidecar", "index.js");
@@ -25,20 +27,25 @@ describe("Electron dev Closure resources", () => {
     await writeFile(join(webRoot, ".next", "static", "chunks", "app.js"), "hydrate();");
     await writeFile(join(webRoot, "public", "icon.svg"), "<svg/>");
     const outputRoot = join(workspaceRoot, ".tmp", "resources");
-    const receipt = await buildElectronDevClosureResources({ outputRoot, workspaceRoot });
-    expect(await readFile(join(webServer, "..", ".next", "static", "chunks", "app.js"), "utf8")).toBe("hydrate();");
-    expect(await readFile(join(webServer, "..", "public", "icon.svg"), "utf8")).toBe("<svg/>");
+    const receipt = await buildDevClosureResources({ outputRoot, workspaceRoot });
+    assert.equal(await readFile(join(webServer, "..", ".next", "static", "chunks", "app.js"), "utf8"), "hydrate();");
+    assert.equal(await readFile(join(webServer, "..", "public", "icon.svg"), "utf8"), "<svg/>");
 
-    expect(receipt.resources.map(({ id }) => id)).toEqual(["open-design-daemon", "open-design-web"]);
+    assert.equal(receipt.operation, "closure.resources.development");
+    assert.deepEqual(JSON.parse(await readFile(join(outputRoot, "resource-receipt.json"), "utf8")), receipt);
+    assert.deepEqual(receipt.resources.map(({ id }) => id), ["open-design-daemon", "open-design-web"]);
     for (const resource of receipt.resources) {
-      expect(resource.treeSha256).toMatch(/^[a-f0-9]{64}$/u);
+      assert.match(resource.treeSha256, /^[a-f0-9]{64}$/u);
+      const bytes = await readFile(resource.path);
+      assert.equal(bytes.byteLength, resource.size);
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), resource.sha256);
       const zip = await JSZip.loadAsync(await readFile(resource.path));
-      expect(Object.keys(zip.files)).toEqual(["sidecar.mjs"]);
+      assert.deepEqual(Object.keys(zip.files), ["sidecar.mjs"]);
       const source = await zip.file("sidecar.mjs")!.async("string");
-      expect(source).toContain("await import(\"file://");
-      expect(source).not.toContain("daemon\\n");
-      expect(source).not.toContain("web\\n");
-      if (resource.id === "open-design-web") expect(source).toContain("OD_WEB_STANDALONE_ROOT");
+      assert.ok(source.includes("await import(\"file://"));
+      assert.ok(!source.includes("daemon\\n"));
+      assert.ok(!source.includes("web\\n"));
+      if (resource.id === "open-design-web") assert.ok(source.includes("OD_WEB_STANDALONE_ROOT"));
     }
   });
 });

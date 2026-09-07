@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, type KeyObject } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   verifyStandaloneMetadata,
@@ -230,4 +230,23 @@ export async function loadElectronStandaloneInstallation(input: Readonly<{
     supervisorPath: join(input.resourceRoot, declaration.supervisor.file),
     candidates: Object.freeze(candidates),
   });
+}
+
+/** Project build resources using the same descriptor rules as installed startup. */
+export async function loadElectronStandaloneAuthorityResources(resourceRoot: string) {
+  const root = resolve(resourceRoot);
+  const path = join(root, ELECTRON_STANDALONE_INSTALLATION_FILE);
+  const declaration = validateElectronStandaloneInstallation(parseJson(
+    await regularInstalledBytes(path, "Electron Standalone installation"),
+    "Electron Standalone installation",
+  ));
+  const descriptors = [declaration.host, declaration.updaterProvider, declaration.supervisor, declaration.content, declaration.trust, ...declaration.seeds];
+  if (descriptors.some(({ file }) => file === ELECTRON_STANDALONE_INSTALLATION_FILE)) {
+    throw new Error("Electron Standalone installed resource reuses its installation declaration");
+  }
+  await Promise.all(descriptors.map((descriptor) => verifiedInstalledBytes(root, descriptor, `Electron Standalone ${descriptor.file}`)));
+  return Object.freeze([
+    Object.freeze({ name: ELECTRON_STANDALONE_INSTALLATION_FILE, path }),
+    ...descriptors.map(({ file }) => Object.freeze({ name: file, path: join(root, file) })),
+  ]);
 }

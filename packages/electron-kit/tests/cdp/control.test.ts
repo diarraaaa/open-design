@@ -34,7 +34,7 @@ function request(root: string) {
 
 function installCdpFixture(responses: Array<Readonly<{ error?: unknown; result?: unknown }>>): { fetch: ReturnType<typeof vi.fn> } {
   const fetch = vi.fn(async (_url: string) => new Response(JSON.stringify([
-    { type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:43123/devtools/page/test" },
+    { id: "test", title: "Test", url: "about:blank", type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:43123/devtools/page/test" },
   ]), { status: 200 }));
   class FixtureWebSocket extends EventTarget {
     constructor(_url: string) {

@@ -1,9 +1,10 @@
-const CLI_COMMANDS = new Set(["start", "run", "status", "stop", "restart", "logs", "inspect", "check", "help"]);
+const CLI_COMMANDS = new Set(["prepare", "start", "run", "status", "stop", "restart", "logs", "inspect", "check", "help"]);
 const OPTIONS_WITH_VALUE = new Set([
   "--daemon-port",
   "--env-file",
   "--expr",
   "--namespace",
+  "--output",
   "--parent-pid",
   "--path",
   "--selector",

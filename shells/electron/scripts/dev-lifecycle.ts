@@ -8,12 +8,10 @@ import { prepareElectronDevShell } from "@open-design/electron-kit/dev";
 import { validateElectronShellManifest, type ElectronShellManifest } from "@open-design/electron-kit/contracts";
 
 import { resolveElectronStandaloneTarget } from "../src/adapters/standalone/installation.ts";
-import { loadElectronStandaloneAuthorityResources } from "./build-authority.ts";
+import { loadElectronStandaloneAuthorityResources } from "../src/adapters/standalone/installation.ts";
 import { materializeElectronDevInstallation } from "./dev-installation.ts";
-import { inspectElectronCdpStatus } from "./cdp-inspection.ts";
-import { observeElectronDiagnostics } from "./runtime-diagnostics.ts";
-import { waitForElectronProductReady } from "./product-readiness.ts";
-import { electronGracefulStopOptions } from "./shutdown-policy.ts";
+import { inspectElectronCdpStatus } from "@open-design/electron-kit/cdp";
+import { observeElectronDiagnostics, waitForElectronProductReady, electronGracefulStopOptions, findElectronRuntimeSurvivors } from "../src/adapters/standalone/observation.ts";
 
 export const ELECTRON_DEV_LIFECYCLE_SCHEMA_VERSION = 1 as const;
 
@@ -149,7 +147,8 @@ export async function executeElectronDevLifecycle(request: ElectronDevLifecycleR
     const current = await getSidecarStatus(stamp(request), { timeoutMs: 1_000 }).catch(() => null);
     return Object.freeze({ operation: request.operation, schemaVersion: 1 as const, shell: Object.freeze({ type: "electron" as const, channel: request.channel, namespace: request.namespace }), status: await observeElectronDiagnostics(request.controlRuntimeRoot, current) });
   }
-  const stopped = await stopSidecar(stamp(request), electronGracefulStopOptions);
+  const electron = await stopSidecar(stamp(request), electronGracefulStopOptions);
+  const stopped = Object.freeze({ ...electron, remainingPids: Object.freeze([...new Set([...electron.remainingPids, ...await findElectronRuntimeSurvivors(request)])]) });
   return Object.freeze({ operation: request.operation, schemaVersion: 1 as const, shell: Object.freeze({ type: "electron" as const, channel: request.channel, namespace: request.namespace }), stopped });
 }
 

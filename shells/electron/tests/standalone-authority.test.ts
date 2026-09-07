@@ -18,7 +18,7 @@ import type { ElectronShellManifest } from "@open-design/electron-kit/runtime";
 import { verifyElectronInstallerArtifact } from "@open-design/electron-kit/installation";
 import type { ElectronInstallerArtifactIdentity, ElectronInstallerHandoffRequest, ElectronMacInstallerTrustReceipt, ElectronMacLastKnownGoodCaptureReceipt, ElectronMacLastKnownGoodCaptureRequest, ElectronMacLastKnownGoodRestorePreparationRequest, ElectronMacLastKnownGoodRestorePreparationReceipt } from "@open-design/electron-kit/installation";
 
-import { buildElectronStandaloneAuthority } from "../scripts/build-authority.ts";
+import { buildElectronStandaloneAuthority } from "@/adapters/standalone/build.js";
 import { createElectronStandaloneAuthorityFactory, isElectronStandaloneScope } from "@/adapters/standalone/authority.js";
 import { StandaloneHostControlClient } from "@open-design/standalone";
 import { createStandaloneHostControlTransport } from "@/adapters/standalone/control-client.js";

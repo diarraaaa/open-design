@@ -19,6 +19,7 @@ import type { ElectronWarmupExecutor, ElectronWarmupTopology } from "../runtime/
 import type { ElectronInstallerClaimSnapshot, ElectronInstallerConfirmationReceipt, ElectronInstallerConfirmationRequest, ElectronInstallerHandoffReceipt, ElectronInstallerHandoffRequest, ElectronInstallerRecoveryIntent, ElectronInstallerRecoveryReceipt, ElectronInstallerRecoveryRequest } from "../update/installation/contracts.js";
 export type { ElectronInstallerClaimIdentity, ElectronInstallerClaimSnapshot, ElectronInstallerConfirmationReceipt, ElectronInstallerConfirmationRequest, ElectronInstallerHandoffReceipt, ElectronInstallerHandoffRequest, ElectronInstallerRecoveryIntent, ElectronInstallerRecoveryReceipt, ElectronInstallerRecoveryRequest } from "../update/installation/contracts.js";
 import type { ElectronMacRuntimePolicy } from "../platform/macos/contracts.js";
+import type { ElectronRendererRecoveryPolicy } from "../runtime/window/crash-recovery.js";
 
 export const ELECTRON_KIT_CONTRACT_VERSION = 1 as const;
 
@@ -169,6 +170,10 @@ export type ElectronShellDefinition = Readonly<{
   headless?: boolean;
   actions?: ElectronShellActions;
   renderer: ElectronShellRenderer;
+  rendererRecovery?: Readonly<{
+    policy: ElectronRendererRecoveryPolicy;
+    prompt: Readonly<{ title: string; message: string; detail: string; retryLabel: string; quitLabel: string }>;
+  }>;
   warmupExecutors?: Readonly<Record<string, ElectronWarmupExecutor>>;
   createStandaloneAuthority: ElectronStandaloneAuthorityFactory;
 }>;

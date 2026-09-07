@@ -14,7 +14,7 @@ import {
   ELECTRON_STANDALONE_INSTALLATION_FILE,
   loadElectronStandaloneInstallation,
 } from "@/adapters/standalone/installation.js";
-import { loadElectronStandaloneAuthorityResources } from "../scripts/build-authority.ts";
+import { loadElectronStandaloneAuthorityResources } from "@/adapters/standalone/installation.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true }))); });
@@ -89,6 +89,14 @@ async function installedFixture() {
 }
 
 describe("Electron Standalone installed authority input", () => {
+  it("uses the installed descriptor schema for build resource projection", async () => {
+    const fixture = await installedFixture();
+    await writeFile(join(fixture.root, ELECTRON_STANDALONE_INSTALLATION_FILE), canonicalJson({
+      ...fixture.declaration,
+      host: { ...fixture.declaration.host, ignored: true },
+    }));
+    await expect(loadElectronStandaloneAuthorityResources(fixture.root)).rejects.toThrow("fields must be exactly");
+  });
   it("verifies the exact release, trust root, host, and complete offline seed set", async () => {
     const fixture = await installedFixture();
     const installation = await loadElectronStandaloneInstallation({
@@ -119,7 +127,7 @@ describe("Electron Standalone installed authority input", () => {
     await writeFile(join(fixture.root, fixture.declaration.updaterProvider.file), "tampered");
     await expect(loadElectronStandaloneInstallation({ resourceRoot: fixture.root, channel: "betahyx", target: "darwin-arm64" }))
       .rejects.toThrow("Electron updater provider");
-    await expect(loadElectronStandaloneAuthorityResources(fixture.root)).rejects.toThrow("updater provider");
+    await expect(loadElectronStandaloneAuthorityResources(fixture.root)).rejects.toThrow("electron-updater.mjs size does not match");
   });
 
   it("rejects installed byte drift before trusting content", async () => {
@@ -127,7 +135,7 @@ describe("Electron Standalone installed authority input", () => {
     await writeFile(join(fixture.root, fixture.declaration.content.file), "{}\n");
     await expect(loadElectronStandaloneInstallation({ resourceRoot: fixture.root, channel: "betahyx", target: "darwin-arm64" }))
       .rejects.toThrow("content size does not match");
-    await expect(loadElectronStandaloneAuthorityResources(fixture.root)).rejects.toThrow("content resource differs from its descriptor");
+    await expect(loadElectronStandaloneAuthorityResources(fixture.root)).rejects.toThrow("standalone-content.json size does not match");
   });
 
   it("rejects a symlinked installed resource even when its bytes match", async () => {

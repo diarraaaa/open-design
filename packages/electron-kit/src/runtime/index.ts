@@ -21,7 +21,6 @@ import {
   type ElectronStandaloneAuthority,
   type ElectronStandalonePreparedRuntime,
   type ElectronStandaloneContentUpdaterPort,
-  type ElectronStandaloneContentUpdateApplication,
 } from "../contracts/index.js";
 export type {
   ElectronInstallerClaimIdentity,
@@ -66,6 +65,7 @@ import {
 } from "./window/mount-acknowledgement.js";
 import { mountElectronRendererLease, replaceElectronRendererLease } from "./window/renderer-mount.js";
 import { observeElectronRuntimeTerminal } from "./session/terminal-observer.js";
+import { awaitElectronRendererRecoveryDecision, ElectronRendererCrashBreaker } from "./window/crash-recovery.js";
 
 import { electronSplashHtml } from "./window/splash.js";
 
@@ -210,7 +210,65 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
   let rendererMount: Promise<void> | null = null;
   let activationAcquisition: Promise<ElectronActivationAttempt> | null = null;
   const rendererShutdown = new AbortController();
-  let rendererReplacement: Promise<ElectronStandaloneContentUpdateApplication> | null = null;
+  let rendererReplacement: Promise<unknown> | null = null;
+  let rendererRecoveryParked = false;
+  const recoveringWindows = new WeakSet<BrowserWindow>();
+  const rendererRecovery = definition.rendererRecovery;
+  const crashBreaker = rendererRecovery == null ? null : new ElectronRendererCrashBreaker(rendererRecovery.policy);
+  const rendererSignal = () => {
+    const timeoutMs = warmupTopology.nodes.find(({ executor }) => executor === ELECTRON_WARMUP_ATOMS.MOUNT_RENDERER)?.timeoutMs
+      ?? warmupTopology.totalTimeoutMs;
+    return timeoutMs == null ? rendererShutdown.signal : AbortSignal.any([rendererShutdown.signal, AbortSignal.timeout(timeoutMs)]);
+  };
+  const recoverRenderer = async (window: BrowserWindow, details: Electron.RenderProcessGoneDetails) => {
+    if (rendererShutdown.signal.aborted || window.isDestroyed() || details.reason === "clean-exit") return;
+    if (context.startup?.phase !== "committed") { context.log?.write("renderer.startup.crashed", { details }); app.quit(); return; }
+    await rendererReplacement?.catch(() => undefined);
+    if (rendererShutdown.signal.aborted || window.isDestroyed() || rendererLease?.window !== window) return;
+    if (recoveringWindows.has(window)) return;
+    recoveringWindows.add(window);
+    const outcome = crashBreaker?.record(Date.now());
+    if (outcome === "ignore") return;
+    context.log?.write("renderer.crashed", { details, outcome });
+    if (rendererRecovery == null || crashBreaker == null) { app.quit(); return; }
+    const replacing = (async () => {
+      if (outcome === "park") {
+        rendererRecoveryParked = true;
+        context.log?.write("renderer.recovery.parked", { cooldownMs: rendererRecovery.policy.cooldownMs });
+        const choice = presentation === "headless" ? "quit" : await awaitElectronRendererRecoveryDecision({
+          cooldownMs: rendererRecovery.policy.cooldownMs,
+          signal: rendererShutdown.signal,
+          async prompt(signal) {
+            const labels = rendererRecovery.prompt;
+            // macOS parentless message boxes are synchronous and cannot be aborted.
+            const result = await dialog.showMessageBox(window, { title: labels.title, message: labels.message, detail: labels.detail,
+              buttons: [labels.retryLabel, labels.quitLabel], defaultId: 0, cancelId: 1, noLink: true, type: "error", signal });
+            return result.response === 0 ? "retry" : "quit";
+          },
+        });
+        rendererRecoveryParked = false;
+        if (rendererShutdown.signal.aborted) return;
+        if (choice === "quit") { app.quit(); return; }
+        crashBreaker.reset();
+      }
+      const binding = requireWarmupState(generationBinding, "a renderer generation binding");
+      const observed = await requireWarmupState(runtimeHandle, "a Standalone runtime handle").readStatus();
+      if (observed.state !== "running" || observed.bindingDigest !== binding.digest || observed.generationId !== binding.generationId) {
+        throw new Error("renderer recovery cannot reuse a revoked runtime binding");
+      }
+      const signal = rendererSignal();
+      rendererLease = await replaceElectronRendererLease({
+        previous: requireWarmupState(rendererLease, "a renderer lease"),
+        mount: () => mountRenderer(binding, signal, randomUUID()),
+        reveal: lease => { signal.throwIfAborted(); focusElectronWindow(lease.window, presentation, "initial-reveal"); },
+      });
+      context.log?.write("renderer.recovery.committed", { bindingDigest: binding.digest, generationId: binding.generationId });
+    })();
+    rendererReplacement = replacing;
+    try { await replacing; }
+    catch (error) { context.log?.write("renderer.recovery.failed", { error }); app.quit(); }
+    finally { rendererRecoveryParked = false; if (rendererReplacement === replacing) rendererReplacement = null; }
+  };
   const mountRenderer = (binding: StandaloneGenerationBinding, signal: AbortSignal, attemptId: string) => mountElectronRendererLease({
     context: {
       acknowledgement: createElectronRendererMountAcknowledgement({ attemptId, bindingDigest: binding.digest }),
@@ -219,7 +277,13 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
       manifest, preflight, presentation,
       runtime: Object.freeze({ attachment, binding, handle: requireWarmupState(runtimeHandle, "a Standalone runtime handle") }),
     },
-    createWindow: (options) => new BrowserWindow(options),
+    createWindow: (options) => {
+      const window = new BrowserWindow(options);
+      window.webContents.on("render-process-gone", (_event, details) => {
+        void recoverRenderer(window, details).catch(error => { context.log?.write("renderer.recovery.failed", { error }); app.quit(); });
+      });
+      return window;
+    },
     ipc: ipcMain,
     renderer: definition.renderer,
     signal,
@@ -230,12 +294,10 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
       if (context.startup?.phase !== "committed" || rendererShutdown.signal.aborted || rendererReplacement != null) {
         throw new Error("Electron renderer is not available for a content update");
       }
-      rendererReplacement = (async () => {
+      const replacing = (async () => {
         const applied = await requireWarmupState(preparedRuntime, "a prepared Standalone runtime").contentUpdater.applyNow(options);
         if (applied.status === "blocked") return applied;
-        const timeoutMs = warmupTopology.nodes.find(({ executor }) => executor === ELECTRON_WARMUP_ATOMS.MOUNT_RENDERER)?.timeoutMs
-          ?? warmupTopology.totalTimeoutMs;
-        const signal = timeoutMs == null ? rendererShutdown.signal : AbortSignal.any([rendererShutdown.signal, AbortSignal.timeout(timeoutMs)]);
+        const signal = rendererSignal();
         rendererLease = await replaceElectronRendererLease({
           previous: requireWarmupState(rendererLease, "a renderer lease"),
           mount: () => mountRenderer(applied.binding, signal, randomUUID()),
@@ -246,7 +308,8 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
         context.log?.write("renderer.generation.committed", { generationId: applied.generation.id, bindingDigest: applied.binding.digest });
         return applied;
       })();
-      try { return await rendererReplacement; }
+      rendererReplacement = replacing;
+      try { return await replacing; }
       catch (error) {
         context.log?.write("renderer.generation.failed", { error });
         // A retired product endpoint must never remain presented as usable.
@@ -510,7 +573,7 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
   void observeElectronRuntimeTerminal({
     runtime: runtimeStandaloneHandle,
     isClosing: () => closing,
-    async waitForRendererReplacement() { await rendererReplacement?.catch(() => undefined); },
+    async waitForRendererReplacement() { if (!rendererRecoveryParked) await rendererReplacement?.catch(() => undefined); },
     onTerminal(observation) { context.log?.write("standalone.terminal", observation); app.quit(); },
   }).catch((error: unknown) => { context.log?.write("standalone.observation.failed", { error }); app.quit(); });
   void observeElectronInstallerHandoff({

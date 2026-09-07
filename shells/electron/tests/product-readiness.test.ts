@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { waitForElectronProductReady } from "../scripts/product-readiness.ts";
+import { waitForElectronProductReady } from "@/adapters/standalone/observation.js";
 
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });

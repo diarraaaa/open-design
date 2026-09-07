@@ -3,6 +3,20 @@
   "shutdown": {
     "gracefulTimeoutMs": 75000
   },
+  "rendererRecovery": {
+    "policy": {
+      "crashLimit": 5,
+      "windowMs": 60000,
+      "cooldownMs": 300000
+    },
+    "prompt": {
+      "title": "OpenDesign renderer recovery",
+      "message": "The application window has crashed repeatedly.",
+      "detail": "Automatic recovery is paused. You can retry now or quit. Another recovery attempt will run after five minutes.",
+      "retryLabel": "Retry",
+      "quitLabel": "Quit"
+    }
+  },
   "preflight": {
     "schemaVersion": 1,
     "atoms": [

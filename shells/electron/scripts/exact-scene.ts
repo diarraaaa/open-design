@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { assembleElectronScene } from "@open-design/electron-kit/distribution";
 
-import { buildElectronStandaloneAuthority } from "./build-authority.ts";
+import { buildElectronStandaloneAuthority } from "../src/adapters/standalone/build.ts";
 import { parseElectronExactSceneRequest } from "./exact-adapter-contract.ts";
 
 function argument(name: string): string {

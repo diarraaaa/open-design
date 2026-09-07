@@ -49,7 +49,7 @@ describe("exact release control", () => {
     process.env.OD_EXACT_SIGNING_KEY_ID = "release-test";
     process.env.OD_EXACT_ED25519_PRIVATE_KEY = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
     try {
-      await executeExactPackControl({
+      const prepareRequest = {
         schemaVersion: 1,
         operation: "exact.prepare",
         channel: "betahyx",
@@ -63,7 +63,13 @@ describe("exact release control", () => {
         resourceReceiptFile: join(scene, "closure-resources.json"),
         shells: [{ type: shellType, version: "0.1.0", scenes: [{ target: "darwin-arm64", sceneDirectory: scene, sceneManifestSha256: digest(await readFile(manifestPath)) }] }],
         outputDirectory: output,
-      }, join(output, "prepare-receipt.json"));
+      };
+      const resourceReceiptPath = join(scene, "closure-resources.json");
+      const resourceReceipt = JSON.parse(await readFile(resourceReceiptPath, "utf8"));
+      await writeFile(resourceReceiptPath, JSON.stringify({ ...resourceReceipt, operation: "closure.resources.development" }));
+      await expect(executeExactPackControl(prepareRequest, join(output, "prepare-receipt.json"))).rejects.toThrow("resource receipt is invalid");
+      await writeFile(resourceReceiptPath, JSON.stringify(resourceReceipt));
+      await executeExactPackControl(prepareRequest, join(output, "prepare-receipt.json"));
       const prepared = JSON.parse(await readFile(join(output, "prepare-receipt.json"), "utf8"));
       const contributionFile = join(root, "contribution.json"), finalDirectory = join(root, "final");
       const contribution = {

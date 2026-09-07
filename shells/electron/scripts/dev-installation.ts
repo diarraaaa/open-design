@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalJson } from "@open-design/standalone";
 
 import { loadElectronStandaloneInstallation, type ElectronStandaloneTarget } from "../src/adapters/standalone/installation.ts";
-import { buildElectronStandaloneAuthority } from "./build-authority.ts";
+import { buildElectronStandaloneAuthority } from "../src/adapters/standalone/build.ts";
 
 export const ELECTRON_DEV_INSTALLATION_SCHEMA_VERSION = 1 as const;
 

@@ -62,6 +62,7 @@ import {
 import { rewriteCliArgsForDefaultStart } from "./cli-args.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
+import { buildDevClosureResources } from "./closure-resources.js";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -1035,6 +1036,15 @@ async function runForeground(config: ToolDevConfig, appName: string | undefined,
 }
 
 const cli = cac("tools-dev");
+
+cli.command("prepare <target>", "Prepare local development fixture inputs from built app outputs")
+  .option("--output <path>", "directory for resource archives and resource-receipt.json")
+  .action(async (target: string, options: { output?: string }) => {
+    if (target !== "closure") throw new Error("tools-dev prepare supports only closure");
+    if (options.output == null) throw new Error("--output is required");
+    const receipt = await buildDevClosureResources({ workspaceRoot: WORKSPACE_ROOT, outputRoot: path.resolve(options.output) });
+    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+  });
 
 function addSharedOptions(command: ReturnType<typeof cli.command>) {
   return command

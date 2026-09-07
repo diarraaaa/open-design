@@ -70,6 +70,7 @@ describe("exact release plan", () => {
     const shellSources = resolveContentIdentityDeclaration(registry, "electron.shell.build").sources;
     const shellPaths = shellSources.map(({ path }) => path);
     expect(shellPaths).toContain("shells/electron/src");
+    expect(shellPaths).toContain("packages/sidecar/esbuild.config.mjs");
     expect(shellPaths).toContain("packages/electron-kit/src");
     expect(shellSources.find(({ path }) => path === "packages/electron-kit/src")?.excludePaths).toEqual([
       "cdp", "cdp-api.ts", "commands/cdp-control.ts",

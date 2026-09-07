@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
 
-import { inspectElectronCdpStatus } from "../scripts/cdp-inspection.ts";
+import { inspectElectronCdpStatus } from "@/cdp/inspection.js";
 
 describe("Electron Shell native CDP inspection", () => {
   it("preserves lifecycle inspection when the native endpoint closes during discovery", async () => {

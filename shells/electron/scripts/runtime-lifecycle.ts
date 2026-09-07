@@ -4,18 +4,13 @@ import { fileURLToPath } from "node:url";
 
 import {
   convergeSidecarLaunch,
-  findSidecarProcesses,
   getSidecarStatus,
   stopSidecar,
   type SidecarStamp,
 } from "@open-design/sidecar";
 import { APP_KEYS, SIDECAR_MODES, SIDECAR_SOURCES } from "@open-design/sidecar-proto";
-import { inspectElectronCdpStatus } from "./cdp-inspection.ts";
-import { waitForElectronProductReady } from "./product-readiness.ts";
-import { observeElectronDiagnostics } from "./runtime-diagnostics.ts";
-import { electronGracefulStopOptions } from "./shutdown-policy.ts";
-import resourceDeclaration from "../config/standalone.json" with { type: "json" };
-import { validateElectronPhysicalResourceSet } from "../src/adapters/standalone/physical-resources.ts";
+import { inspectElectronCdpStatus } from "@open-design/electron-kit/cdp";
+import { waitForElectronProductReady, observeElectronDiagnostics, electronGracefulStopOptions, findElectronRuntimeSurvivors } from "../src/adapters/standalone/observation.ts";
 
 type RequestScope = Readonly<{
   channel: string;
@@ -118,9 +113,7 @@ export async function executeElectronRuntimeLifecycle(request: ElectronRuntimeLi
     const electron = await stopSidecar(stamp, electronGracefulStopOptions);
     // Shell shutdown owns guarded retirement. The tool observes physical
     // survivors only; attachment counts never authorize an extra stop sequence.
-    const remainingResources = await Promise.all(validateElectronPhysicalResourceSet(resourceDeclaration).resources.map((resource) =>
-      findSidecarProcesses({ ...resource.stamp, channel: request.channel, namespace: request.namespace })));
-    const remainingPids = [...electron.remainingPids, ...remainingResources.flatMap((processes) => processes.map(({ pid }) => pid))];
+    const remainingPids = [...electron.remainingPids, ...await findElectronRuntimeSurvivors(request)];
     return Object.freeze({
       schemaVersion: 1 as const,
       operation: request.operation,

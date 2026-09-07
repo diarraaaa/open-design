@@ -24,6 +24,22 @@ function discoveryFromStatus(status: unknown): ElectronCdpDiscovery {
   return Object.freeze({ state: cdp?.state === "starting" ? "starting" : "disabled" });
 }
 
+/** Shared native discovery for observational inspect and CDP control. */
+export async function listElectronCdpTargets(discoveryUrl: string, signal: AbortSignal): Promise<readonly ElectronCdpTarget[]> {
+  const response = await fetch(`${discoveryUrl}/json/list`, { redirect: "error", signal });
+  if (!response.ok) throw new Error(`Electron CDP target discovery failed with HTTP ${response.status}`);
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) throw new Error("Electron CDP target discovery returned a non-array payload");
+  return Object.freeze(payload.flatMap((entry) => {
+    const target = record(entry);
+    if (target == null || typeof target.id !== "string" || typeof target.title !== "string"
+      || typeof target.type !== "string" || typeof target.url !== "string") return [];
+    return [Object.freeze({ id: target.id, title: target.title, type: target.type, url: target.url,
+      ...(typeof target.webSocketDebuggerUrl === "string" ? { webSocketDebuggerUrl: target.webSocketDebuggerUrl } : {}),
+    })];
+  }));
+}
+
 /** Read Electron's native CDP discovery endpoint without inventing another debug protocol. */
 export async function inspectElectronCdpStatus(status: unknown): Promise<Readonly<{
   discovery: ElectronCdpDiscovery;
@@ -31,24 +47,11 @@ export async function inspectElectronCdpStatus(status: unknown): Promise<Readonl
 }>> {
   const discovery = discoveryFromStatus(status);
   if (discovery.state !== "ready") return Object.freeze({ discovery, targets: Object.freeze([]) });
-  let value: unknown[];
   try {
-    const response = await fetch(`${discovery.discoveryUrl}/json/list`, { signal: AbortSignal.timeout(2_000) });
-    if (!response.ok) throw new Error(`Electron CDP target discovery failed with HTTP ${response.status}`);
-    const payload: unknown = await response.json();
-    if (!Array.isArray(payload)) throw new Error("Electron CDP target discovery returned a non-array payload");
-    value = payload;
+    const targets = await listElectronCdpTargets(discovery.discoveryUrl, AbortSignal.timeout(2_000));
+    return Object.freeze({ discovery, targets });
   } catch (error) {
     return Object.freeze({ discovery: Object.freeze({ state: "unavailable" as const, discoveryUrl: discovery.discoveryUrl,
       error: error instanceof Error ? error.message : String(error) }), targets: Object.freeze([]) });
   }
-  const targets = value.filter((entry): entry is ElectronCdpTarget => {
-    const target = record(entry);
-    return target != null
-      && typeof target.id === "string"
-      && typeof target.title === "string"
-      && typeof target.type === "string"
-      && typeof target.url === "string";
-  });
-  return Object.freeze({ discovery, targets: Object.freeze(targets) });
 }

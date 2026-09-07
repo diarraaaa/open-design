@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import JSZip from "jszip";
-import { canonicalJson, standaloneTreeSha256 } from "@open-design/standalone";
+import { standaloneTreeSha256 } from "@open-design/standalone";
 
-export const ELECTRON_DEV_CLOSURE_RESOURCES_SCHEMA_VERSION = 1 as const;
+export const DEV_CLOSURE_RESOURCES_SCHEMA_VERSION = 1 as const;
 
 type Resource = Readonly<{
   entrypoint: "sidecar.mjs";
@@ -14,12 +14,14 @@ type Resource = Readonly<{
   id: "open-design-daemon" | "open-design-web";
   path: string;
   treeSha256: string;
+  sha256: string;
+  size: number;
 }>;
 
-export type ElectronDevClosureResourcesReceipt = Readonly<{
-  operation: "electron.dev.closure-resources.build";
+export type DevClosureResourcesReceipt = Readonly<{
+  operation: "closure.resources.development";
   resources: readonly Resource[];
-  schemaVersion: typeof ELECTRON_DEV_CLOSURE_RESOURCES_SCHEMA_VERSION;
+  schemaVersion: typeof DEV_CLOSURE_RESOURCES_SCHEMA_VERSION;
 }>;
 
 async function regularFile(path: string, label: string): Promise<void> {
@@ -63,18 +65,22 @@ async function archive(input: Readonly<{
     file: input.file,
     id: input.id,
     path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: bytes.byteLength,
     treeSha256: standaloneTreeSha256([{ path: "sidecar.mjs", sha256: createHash("sha256").update(input.body).digest("hex"), size: input.body.byteLength }]),
   });
 }
 
-/** Build signed dev adapters; production resources must be self-contained. */
-export async function buildElectronDevClosureResources(input: Readonly<{
+/** Development-only references to local producer outputs, not distributable content.
+ * tools-serve signs the fixture metadata; this producer only describes bytes.
+ */
+export async function buildDevClosureResources(input: Readonly<{
   outputRoot: string;
   workspaceRoot: string;
-}>): Promise<ElectronDevClosureResourcesReceipt> {
+}>): Promise<DevClosureResourcesReceipt> {
   const outputRoot = resolve(input.outputRoot);
   const workspaceRoot = resolve(input.workspaceRoot);
-  if (outputRoot !== input.outputRoot || workspaceRoot !== input.workspaceRoot) throw new Error("Electron dev Closure resource paths must be absolute and normalized");
+  if (outputRoot !== input.outputRoot || workspaceRoot !== input.workspaceRoot) throw new Error("Dev Closure resource paths must be absolute and normalized");
   const daemonEntry = join(workspaceRoot, "apps", "daemon", "dist", "sidecar", "index.js");
   const webEntry = join(workspaceRoot, "apps", "web", "dist", "sidecar", "index.js");
   const webRoot = await standaloneWebRoot(workspaceRoot);
@@ -83,22 +89,7 @@ export async function buildElectronDevClosureResources(input: Readonly<{
     archive({ body: wrapper(daemonEntry), file: "open-design-daemon.zip", id: "open-design-daemon", outputRoot }),
     archive({ body: wrapper(webEntry, { OD_WEB_STANDALONE_ROOT: webRoot }), file: "open-design-web.zip", id: "open-design-web", outputRoot }),
   ]);
-  return Object.freeze({ schemaVersion: 1, operation: "electron.dev.closure-resources.build", resources: Object.freeze(resources) });
-}
-
-function argument(name: string): string {
-  const index = process.argv.indexOf(name);
-  const value = index < 0 ? undefined : process.argv[index + 1];
-  if (value == null || value.startsWith("--")) throw new Error(`${name} is required`);
-  return resolve(value);
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const receiptPath = argument("--receipt");
-  const receipt = await buildElectronDevClosureResources({
-    outputRoot: argument("--output-root"),
-    workspaceRoot: argument("--workspace-root"),
-  });
-  await mkdir(dirname(receiptPath), { recursive: true });
-  await writeFile(receiptPath, canonicalJson(receipt));
+  const receipt = Object.freeze({ schemaVersion: 1 as const, operation: "closure.resources.development" as const, resources: Object.freeze(resources) });
+  await writeFile(join(outputRoot, "resource-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
+  return receipt;
 }

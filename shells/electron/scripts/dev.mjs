@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 
 import { devElectronShell } from "@open-design/electron-kit/dev";
 import { resolveElectronStandaloneTarget } from "../src/adapters/standalone/installation.ts";
-import { loadElectronStandaloneAuthorityResources } from "./build-authority.ts";
+import { loadElectronStandaloneAuthorityResources } from "../src/adapters/standalone/installation.ts";
 import { materializeElectronDevInstallation } from "./dev-installation.ts";
 
 const installedResourceRoot = process.env.OD_ELECTRON_STANDALONE_RESOURCE_ROOT;
