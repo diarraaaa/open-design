@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -128,8 +128,8 @@ describe("exact Electron release topology", () => {
   it("contains no legacy Electron application or launcher authority", async () => {
     const files = [
       "AGENTS.md",
-      ".github/workflows/ci.yml",
-      ".github/workflows/release-exact.yml",
+      ".gitignore",
+      ...(await readdir(resolve(workspaceRoot, ".github/workflows"))).filter(file => /\.ya?ml$/u.test(file)).map(file => `.github/workflows/${file}`),
       ".github/config/scopes.json",
       ".github/config/convergence.json",
       "scripts/guard.ts",
