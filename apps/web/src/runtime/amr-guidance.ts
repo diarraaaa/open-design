@@ -435,7 +435,11 @@ export type RunFailureTitleKey =
   | 'chat.runError.title.authRequired'
   | 'chat.runError.title.balance'
   | 'chat.runError.title.connectionDropped'
-  | 'chat.runError.title.signInRequired'
+  // 「尚未登录」有两个主语,所以是两个键 —— 一个键装不下两句话。
+  // S02 本地 agent(点名是哪一个,`{agent}` 由报错卡渲染时填);
+  // S04 Open Design 智能体(主语固定,卡内一键授权)。
+  | 'chat.runError.title.signInRequired.other'
+  | 'chat.runError.title.signInRequired.amr'
   | 'chat.runError.title.rateLimited'
   | 'chat.runError.title.modelWindowLimit'
   | 'chat.runError.title.membershipConcurrencyLimit'
@@ -1506,13 +1510,14 @@ function resolveRunFailureUiIgnoringSelfPromotion(
       code === 'AGENT_AUTH_REQUIRED' ||
       code === 'UNAUTHORIZED'
     ) {
-      // Rung 1: we can sign the user in from inside the card. PRD「需要登录」type
-      // — shared title with the non-AMR sign-in case. No AMR promotion (the
+      // Rung 1: we can sign the user in from inside the card. 文案 S04
+      // 「Open Design 尚未登录」—— 主语固定,和 S02 那句**不是**同一句话:
+      // 那边要点名是哪一个本地 agent,这边说的是我们自己。No AMR promotion (the
       // agent already IS AMR); the authorize action reuses the inline
       // AmrLoginPill (sign-in + auto-retry on success).
       return failureCard(
         { directFix: 'authorize' },
-        'chat.runError.title.signInRequired',
+        'chat.runError.title.signInRequired.amr',
         'chat.runError.signInMessage.amr',
       );
     }
@@ -1580,9 +1585,11 @@ function resolveRunFailureUiIgnoringSelfPromotion(
   // running, and a Retry button to redo the chat after OAuth completes.
   if (agentId === 'antigravity') {
     if (code === 'AGENT_AUTH_REQUIRED') {
+      // 文案 S02 那一边:Antigravity 的登录只能在终端里做,但它**是**一个
+      // 本地 agent 没登录 —— 标题点名它自己,和 Cloud 那格分开。
       return failureCard(
         { directFix: 'launch-terminal-auth' },
-        'chat.runError.title.signInRequired',
+        'chat.runError.title.signInRequired.other',
         null,
         { secondaryRetry: true },
       );
@@ -1615,15 +1622,14 @@ function resolveRunFailureUiIgnoringSelfPromotion(
       'chat.connectionDropped',
     );
   }
-  // Non-AMR sign-in required (any non-amr, non-antigravity agent — those two are
-  // handled above). The agent's login lives in the user's own terminal, so Open
-  // Design can't sign in for them: surface a "{agent} 尚未登录，请本地检查登录状态"
-  // message, offer Retry as the primary action (re-run after they log in
-  // locally), and promote AMR as the steadier alternative via the switch card.
+  // 文案 S02 · 本地 agent 没登录 / 登录过期(除 amr 与 antigravity 之外的任何
+  // agent —— 那两个在上面各有自己的分支)。它的登录在用户自己的终端里,Open
+  // Design 替不了:标题「{agent} 尚未登录」点名是哪一个,正文给出下一步,主动作
+  // 是重试(等他们本地登录完再跑一次),并通过切换卡推荐更省事的 Cloud。
   if (code === 'AGENT_AUTH_REQUIRED' || code === 'UNAUTHORIZED') {
     return failureCard(
       { transient: true },
-      'chat.runError.title.signInRequired',
+      'chat.runError.title.signInRequired.other',
       'chat.runError.signInMessage.other',
       { showSwitchCard: true },
     );

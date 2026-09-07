@@ -4,7 +4,7 @@
  *
  * 形态逐字沿用第 82/83 格(球 + 会扫光的一句 + 计数),因为交付稿 4058 明说
  * 不许为同一件事再立第三个模块。换掉的只有那句话:重跑一轮的时候连接是通的,
- * 说「正在重新连接」会把「线真的断了」这句话说漏。
+ * 说「正在恢复网络连接」会把「线真的断了」这句话说漏。
  *
  * 计数那一条另有讲究:今天 daemon 的自动重试预算是 **1**
  * (`apps/daemon/src/run-retry-policy.ts` 的 `DEFAULT_SAFE_RUN_RETRY_MAX_ATTEMPTS`,
@@ -26,11 +26,11 @@ const row = () => screen.getByTestId('chat-reconnect');
 const orb = () => row().querySelector('[data-orb]');
 
 describe('Reconnect · 自动重试读数', () => {
-  it('说的是「正在重试」,不是「正在重新连接」', () => {
+  it('说的是「正在重试」,不是「正在恢复网络连接」', () => {
     render(<Reconnect attempt={1} max={2} reason="agent-retry" />);
     // 逐字浮现会拆文本节点,所以读 textContent 而不是 getByText。
     expect(row().textContent).toBe('正在重试1/2');
-    expect(row().textContent).not.toContain('重新连接');
+    expect(row().textContent).not.toContain('恢复网络连接');
   });
 
   it('形态和第 82 格一致 —— 同一颗球,同样没有按钮', () => {
@@ -52,23 +52,23 @@ describe('Reconnect · 自动重试读数', () => {
 });
 
 describe('传输层那一行一个字没变', () => {
-  it('不传 reason 时仍然是「正在重新连接 N/5」', () => {
+  it('不传 reason 时仍然是「正在恢复网络连接 N/5」', () => {
     render(<Reconnect attempt={2} max={5} />);
-    expect(row().textContent).toBe('正在重新连接2/5');
+    expect(row().textContent).toBe('正在恢复网络连接2/5');
   });
 
   it('显式传 transport 也一样', () => {
     render(<Reconnect attempt={2} max={5} reason="transport" />);
-    expect(row().textContent).toBe('正在重新连接2/5');
+    expect(row().textContent).toBe('正在恢复网络连接2/5');
   });
 
-  it('agent 上游重连也说「正在重新连接」并原位显示计数', () => {
+  it('agent 上游重连也说「正在恢复网络连接」并原位显示计数', () => {
     render(<Reconnect attempt={2} max={5} reason="agent-reconnect" />);
-    expect(row().textContent).toBe('正在重新连接2/5');
+    expect(row().textContent).toBe('正在恢复网络连接2/5');
   });
 
   it('读数超过预算仍然夹到预算上', () => {
     render(<Reconnect attempt={7} max={5} reason="transport" />);
-    expect(row().textContent).toBe('正在重新连接5/5');
+    expect(row().textContent).toBe('正在恢复网络连接5/5');
   });
 });

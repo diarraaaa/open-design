@@ -28,7 +28,7 @@ describe('Reconnect · 82 重连中', () => {
   it('shows how many attempts in, out of the transport budget', () => {
     render(<Reconnect attempt={2} max={5} />);
     // 设计稿 4354 的原文,计数紧跟在这句话后面(同一条扫光里)
-    expect(row().textContent).toBe('正在重新连接2/5');
+    expect(row().textContent).toBe('正在恢复网络连接2/5');
     expect(orb()).not.toBeNull();
   });
 
@@ -40,7 +40,7 @@ describe('Reconnect · 82 重连中', () => {
      * 信息都没给。判据是组件自己的 `showCount = max > 1`,这里钉住它的外观。
      */
     render(<Reconnect attempt={1} max={1} />);
-    expect(row().textContent).toBe('正在重新连接');
+    expect(row().textContent).toBe('正在恢复网络连接');
     expect(orb()).not.toBeNull();
   });
 
@@ -94,7 +94,7 @@ describe('Reconnect · 84 重连失败', () => {
     // 不再是「还在等」:球撤了,计数也不再报
     expect(orb()).toBeNull();
     expect(row().textContent).not.toContain('5/5');
-    expect(screen.getByText('连接失败')).toBeTruthy();
+    expect(screen.getByText('网络连接未能恢复')).toBeTruthy();
 
     // 稿子给的是「重新连接」不是「重试」—— 语义是接回同一个 run 的流,不是新建 run
     fireEvent.click(screen.getByRole('button', { name: '重新连接' }));

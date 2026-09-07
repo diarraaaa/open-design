@@ -69,7 +69,7 @@ describe('AMR 分支不再吞掉后续映射', () => {
       scenario: 'S02 需要登录(AGENT_AUTH_REQUIRED)',
       code: 'AGENT_AUTH_REQUIRED',
       detail: null,
-      titleKey: 'chat.runError.title.signInRequired',
+      titleKey: 'chat.runError.title.signInRequired.amr',
       messageKey: 'chat.runError.signInMessage.amr',
       primaryAction: 'authorize',
     },
@@ -77,7 +77,7 @@ describe('AMR 分支不再吞掉后续映射', () => {
       scenario: 'S17a 授权失效(UNAUTHORIZED)',
       code: 'UNAUTHORIZED',
       detail: null,
-      titleKey: 'chat.runError.title.signInRequired',
+      titleKey: 'chat.runError.title.signInRequired.amr',
       messageKey: 'chat.runError.signInMessage.amr',
       primaryAction: 'authorize',
     },
@@ -193,7 +193,7 @@ describe('AMR 自己的三张专属卡没被拆坏', () => {
   it('AMR_AUTH_REQUIRED:应用内授权并自动重试', () => {
     const ui = resolveRunFailureUi('AMR_AUTH_REQUIRED', null, 'amr');
     expect(ui.primaryAction).toBe('authorize');
-    expect(ui.titleKey).toBe('chat.runError.title.signInRequired');
+    expect(ui.titleKey).toBe('chat.runError.title.signInRequired.amr');
     expect(ui.messageKey).toBe('chat.runError.signInMessage.amr');
   });
 

@@ -2850,7 +2850,13 @@ export interface Dict {
   'chat.runError.title.authRequired': string;
   'chat.runError.title.balance': string;
   'chat.runError.title.connectionDropped': string;
-  'chat.runError.title.signInRequired': string;
+  /**
+   * S02 · 本地 agent 没登录 / 登录过期。`{agent}` 由报错卡在渲染时填 ——
+   * 「哪一个 agent 没登录」是这句话的全部信息量,主语不能省。
+   */
+  'chat.runError.title.signInRequired.other': string;
+  /** S04 · Open Design 智能体没登录 / 授权过期。主语固定,没有插值槽。 */
+  'chat.runError.title.signInRequired.amr': string;
   'chat.runError.title.rateLimited': string;
   'chat.runError.title.modelWindowLimit': string;
   'chat.runError.title.membershipConcurrencyLimit': string;

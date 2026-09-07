@@ -702,7 +702,7 @@ test('[P0] after an AMR failure the user can switch to Codex and complete a fres
   await gotoProject(page, amr.projectId);
   await sendPrompt(page, 'AMR auth failure before switch smoke');
   await expect(runErrorCard(page)).toContainText(
-    /OpenDesign Cloud agent isn't signed in yet|AMR sign-in is required/i,
+    /Sign in to see your projects and continue the conversation|AMR sign-in is required/i,
     { timeout: T.long },
   );
   const settings = await openExecutionSettingsDialog(page);
@@ -800,7 +800,7 @@ test('[P0] upstream outages keep Retry available without promoting AMR', async (
 
   await expect(page.getByRole('button', { name: /^Retry$|^重试$|^重試$/i }).first()).toBeVisible({ timeout: T.long });
   await expect(runErrorCard(page)).toContainText(
-    /Service temporarily unavailable|model service is temporarily unavailable/i,
+    /Model service unavailable|current model is temporarily unavailable/i,
   );
   await expect(page.getByRole('button', { name: /Switch to OpenDesign Cloud & retry/i })).toHaveCount(0);
   await expect(page.getByText(/Model call failed/i)).toHaveCount(0);
@@ -882,8 +882,8 @@ test('[P1] zh-CN run failure guidance shows actionable copy and expandable raw s
   await gotoProject(page, projectId);
 
   const card = runErrorCard(page);
-  await expect(card).toContainText('内容过长', { timeout: T.long });
-  await expect(card).toContainText('本轮输入超出了模型的上下文上限');
+  await expect(card).toContainText('对话内容过长', { timeout: T.long });
+  await expect(card).toContainText('当前对话和附件超过了 AI 可处理的长度');
   await expect(page.getByRole('button', { name: /^重试$/ }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Switch to OpenDesign Cloud & retry/i })).toHaveCount(0);
 

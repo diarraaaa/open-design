@@ -455,12 +455,23 @@ describe('i18n locales', () => {
   });
 
   /*
-   * `assistant.waitingFirstOutput` got its first reader on 2026-09-03 (an ACP
-   * turn silent for 60s now shows it — see
-   * `tests/components/chat/waiting-first-output.test.tsx`). It had sat as a
-   * dead key long enough for a mistranslation to go unnoticed: `tr` read
+   * `assistant.waitingFirstOutput` briefly had a reader (2026-09-03 → 2026-09-07):
+   * an ACP turn silent for 60s swapped the in-shell row's copy to it. Product
+   * reverted that copy on 2026-09-07 — the row reads 「思考中」 again — so the key
+   * is back to being a dead key. See
+   * `tests/components/chat/waiting-first-output.test.tsx` for the revert, and
+   * `ExecutionShell.tsx` for why the *detection* behind it stayed.
+   *
+   * ⚠️ **The key and its 19 translations stay.** Product removed a rendering,
+   * not the situation it describes; the plan of record is to bring it back in a
+   * different form (same call product made for S12 on 2026-08-27). Deleting the
+   * key now means re-translating it into 19 locales later — and it is exactly
+   * the dead-key period that let the bug below slip in unnoticed the first time.
+   *
+   * That dead period had already hidden a mistranslation: `tr` read
    * 「İlk girdi için bekleniyor」— *waiting for first **input***, the exact
-   * inverse of what the line reports.
+   * inverse of what the line reports. This test is what keeps the next dead
+   * period from hiding another one.
    *
    * ⚠️ **What this test can and cannot prove.** Asserting a translated string
    * against the file that defines it is a tautology — it can never tell you

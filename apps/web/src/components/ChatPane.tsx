@@ -752,6 +752,23 @@ interface Props {
    */
   amrBalanceCardUsd?: number | null;
   /**
+   * **这份读数是哪一轮的。** `null` = 没有轮次可锚,读数直接摆在流水末尾。
+   *
+   * T61(产品 2026-09-07):升级卡从「当前余额的实时读数」改成「**这一轮为什么
+   * 停下来的凭据**」。凭据必须有主 —— 卡坐在**那一轮下面**,第二轮跑起来时它
+   * 不许跟着挪下去;第二轮结束后余额仍不足,是**另出一张新的**,不是搬旧的。
+   *
+   * 谁给锚点由 `ProjectView` 决定,因为只有它知道这次读数是替哪一轮取的:
+   *   · 发送前的告警档(`gate.kind === 'soft'`)→ 刚画出去的那一轮
+   *   · 跑到一半死在钱上 → 那条失败的助手消息
+   *   · 拦截档(`gate.kind === 'hard'`)→ **`null`**。那一轮已经被
+   *     `retractPaintedTurn` 收回,根本没有 run,也就没有轮次可锚。
+   *
+   * ⚠️ 锚点只决定「挂在谁下面」,**不决定什么时候出现**。出现时机看那一轮自己
+   * 的收尾状态(见 `archiveLowBalanceTurnCard`)。
+   */
+  amrBalanceCardAnchorMessageId?: string | null;
+  /**
    * **失败之后的那次钱包补查已经落地,而且没读出数字。**
    *
    * 只有跑到一半死在余额上那条路用得着它。那条失败自己**不带余额**,升级卡的
@@ -1292,6 +1309,7 @@ export function ChatPane({
   onOpenSettings,
   onSwitchModel,
   amrBalanceCardUsd = null,
+  amrBalanceCardAnchorMessageId = null,
   amrBalanceCardUnavailable = false,
   onAmrBalanceUpgrade,
   showByokRecoveryAction = false,
@@ -1375,6 +1393,27 @@ export function ChatPane({
    * 只是此刻长得一样。见 `buildChatRenderItems` 的注释。
    */
   const chatRenderItems = useMemo(() => buildChatRenderItems(displayMessages), [displayMessages]);
+  /**
+   * 每一轮各自那张升级卡:key = 那一轮助手消息的 id,value = **结束那一刻**的余额。
+   *
+   * 存在 ref 里而不是 state:它是**只增不改**的账本(T61 ④「存档在当时状态」),
+   * 写入永远发生在一次本来就会重渲的 props 变化里(那一轮转成终态、或者读数落地),
+   * 所以不需要自己再推一次渲染。同一个 key 重复写同一个值是幂等的,
+   * StrictMode 的双跑不会把它写坏。
+   */
+  const lowBalanceTurnCardsRef = useRef<Map<string, number>>(new Map());
+  archiveLowBalanceTurnCard(lowBalanceTurnCardsRef.current, {
+    messages: displayMessages,
+    anchorMessageId: amrBalanceCardAnchorMessageId,
+    balanceUsd: amrBalanceCardUsd,
+  });
+  const lowBalanceTurnCards = lowBalanceTurnCardsRef.current;
+  /**
+   * 有主的读数由锚点那一轮自己画(见上)。**没主**的那一档才落到流水末尾 ——
+   * 拦截档那一轮已经被收回,没有轮次可挂,读数不摆在末尾就彻底没地方说了。
+   */
+  const tailAmrBalanceCardUsd =
+    amrBalanceCardAnchorMessageId == null ? amrBalanceCardUsd : null;
   const trackedMediaRunKey = useMemo(
     () => mediaTaskRunKey(displayMessages, streaming),
     [displayMessages, streaming],
@@ -1483,7 +1522,6 @@ export function ChatPane({
   const amrAuthRetrySignedOutWitnessRef =
     useRef<AmrAuthRetryContinuation | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
-  const chatLogScrollIdleTimerRef = useRef<number | null>(null);
   const historyWrapRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerHandle | null>(null);
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
@@ -1832,8 +1870,6 @@ export function ChatPane({
   const [scrolledFromBottom, setScrolledFromBottom] = useState(false);
   // SDF liquid-glass refraction on the jump pill (frosted fallback via CSS).
   const jumpBtnGlassRef = useLiquidGlass<HTMLButtonElement>({ strength: 0.2 });
-  const [chatLogScrollable, setChatLogScrollable] = useState(false);
-  const [chatLogScrolling, setChatLogScrolling] = useState(false);
   const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
   const [composerPortalRect, setComposerPortalRect] = useState<{
     left: number;
@@ -2139,6 +2175,20 @@ export function ChatPane({
     if (!runFailureUi?.messageCauseKey) return base;
     return { ...(base ?? {}), cause: t(runFailureUi.messageCauseKey) };
   })();
+  /**
+   * 标题和正文名的是**同一件事**,所以取值只有一份。
+   *
+   * 标题这一行原来是裸的 `t(runFailureUi.titleKey)` —— 一个变量都不给。当时
+   * 每个标题都是固定短语,看不出问题;新文案里 S01「未检测到 {智能体}」和 S02
+   * 「{智能体} 尚未登录」把主语放进了标题,裸调用会把**字面的 `{agent}`** 摆到
+   * 用户脸上。
+   *
+   * 走的是正文那侧已经在用的同一份取值,而不是给标题另开一套 `titleVars`:
+   * 两处名的若是同一个 `{agent}`,就没有让它们各取各的的理由 —— 那只会给
+   * 「标题说 Claude、正文说 Codex」留一道缝。用不到的槽(`{retryAt}`、
+   * `{cause}`)传过去是无害的:`t` 只替换字面上出现的占位符。
+   */
+  const runFailureCopyVars = { agent: failedAgentLabel, ...runFailureMessageVars };
   // 卡面上只放人话。命中映射表的用它自己的文案;**其余一律兜底那一句** ——
   // 上游原文永远不上卡面(设计原则五)。卡上也不再收着它:曾经那个「错误详情」
   // 折叠已经整块下线(用户 2026-08-27),要原始日志走〔导出日志〕。
@@ -2189,7 +2239,7 @@ export function ChatPane({
     cardDescription.render === 'none'
       ? null
       : cardDescription.render === 'mapped'
-        ? t(cardDescription.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
+        ? t(cardDescription.messageKey, runFailureCopyVars)
         : cardDescription.render === 'fallback'
           ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
           : cardDescription.text;
@@ -2751,23 +2801,6 @@ export function ChatPane({
     const el = logRef.current;
     if (!el) return;
 
-    function syncScrollable(target: HTMLDivElement) {
-      const next = target.scrollHeight - target.clientHeight > 1;
-      setChatLogScrollable((prev) => (prev === next ? prev : next));
-      if (!next) setChatLogScrolling(false);
-    }
-
-    function markScrolling() {
-      setChatLogScrolling(true);
-      if (chatLogScrollIdleTimerRef.current !== null) {
-        window.clearTimeout(chatLogScrollIdleTimerRef.current);
-      }
-      chatLogScrollIdleTimerRef.current = window.setTimeout(() => {
-        chatLogScrollIdleTimerRef.current = null;
-        setChatLogScrolling(false);
-      }, 650);
-    }
-
     // Restore previously-saved position on remount. Defer to the next
     // frame so the conditional <> contents finish layout before the
     // scrollTop write lands.
@@ -2783,7 +2816,6 @@ export function ChatPane({
           releaseFollow();
           writeLogScrollTop(target, saved.scrollTop);
         }
-        syncScrollable(target);
         // Resync the jump-to-latest affordance with the restored position.
         // Without this, a user who left Chat ~60px from the bottom and returns
         // to find new messages stacked underneath would land hundreds of pixels
@@ -2819,8 +2851,6 @@ export function ChatPane({
           anchorActiveRef.current = false;
         }
       }
-      syncScrollable(target);
-      markScrolling();
       /*
        * 意图**只在这里**跟着用户的手改。方向 + 「`scrollHeight` 没变」两条一起,
        * 把我们自己写的 `scrollTop`、浏览器夹取、原生 scroll anchoring 的修正
@@ -2908,7 +2938,6 @@ export function ChatPane({
       }
     }
 
-    syncScrollable(el);
     rememberScrollSample(el);
     el.addEventListener('scroll', onScroll);
     el.addEventListener('wheel', onWheel, { passive: true });
@@ -2923,11 +2952,6 @@ export function ChatPane({
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
-      if (chatLogScrollIdleTimerRef.current !== null) {
-        window.clearTimeout(chatLogScrollIdleTimerRef.current);
-        chatLogScrollIdleTimerRef.current = null;
-      }
-      setChatLogScrolling(false);
     };
   }, [tab]);
 
@@ -2985,12 +3009,6 @@ export function ChatPane({
     const resizeObserver =
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
-            const target = logRef.current;
-            if (target) {
-              const next = target.scrollHeight - target.clientHeight > 1;
-              setChatLogScrollable((prev) => (prev === next ? prev : next));
-              if (!next) setChatLogScrolling(false);
-            }
             scheduleFollowSync();
           })
         : null;
@@ -3934,10 +3952,17 @@ export function ChatPane({
                 />
                 <div
                 className={[
+                  /* ⚠️ 下面那个滚动容器类是**常量,不是读数**:`.chat-log` 从出生那一刻
+                     起就是 `overflow-y: auto` 的滚动容器,这件事不随内容多少变。它一度
+                     由一条 state 驱动、表达的其实是「此刻有没有超出视口」—— 名字和语义
+                     对不上,每翻一次还要赔一次重渲,而全仓 CSS 里没有规则选中它。
+                     判据:`tests/components/chat/chat-log-scroll-state-classes.test.tsx`。
+                     (这段注释**故意不写出那个类名的字面量** ——
+                     `tests/components/chat/queue-dead-rules.test.tsx` 会逐行扫 `src/`
+                     找它的「全部产地」,连注释一起算。) */
                   'chat-log',
                   loading ? 'is-loading' : '',
-                  chatLogScrollable ? 'is-scrollable' : '',
-                  chatLogScrolling ? 'is-scrolling' : '',
+                  'is-scrollable',
                   shouldBalanceFinishedTranscript ? 'is-balanced-transcript' : '',
                   /* 预留跟着**这一轮有没有计划**走,不跟着药丸此刻挂没挂。
                      理由见上面 `planPillEligible` 的注释:跟着可见性会抖。 */
@@ -4040,6 +4065,10 @@ export function ChatPane({
                   items={chatRenderItems}
                   messages={displayMessages}
                   streaming={streaming}
+                  lowBalanceTurnCards={lowBalanceTurnCards}
+                  onLowBalanceTurnCardUpgrade={
+                    onAmrBalanceUpgrade ?? (() => openAmrPlans('chat_upgrade_card'))
+                  }
                   onResendUserMessage={onResendUserMessage}
                   onRetryImage={handleRetryImage}
                   projectId={projectId}
@@ -4114,8 +4143,11 @@ export function ChatPane({
                   <RunErrorCard
                     dataKind="run-recovery"
                     title={
+                      /* 标题走和正文同一份取值 —— 见 `runFailureCopyVars`。
+                         S01「未检测到 {agent}」/ S02「{agent} 尚未登录」把主语
+                         放进了标题,裸 `t(key)` 会渲染出字面的大括号。 */
                       runFailureUi
-                        ? t(runFailureUi.titleKey)
+                        ? t(runFailureUi.titleKey, runFailureCopyVars)
                         : t('chat.runError.title.generic')
                     }
                     description={displayError}
@@ -4417,12 +4449,18 @@ export function ChatPane({
                 {/*
                   * 升级卡(交付稿第 75 / 76 格)。**流水里的一张卡,不是弹窗** ——
                   * 产品 2026-08-26 裁决「告警可继续的不弹窗,只有卡片;余额不足再弹窗」。
-                  * 它落在最后一轮之后、输入框之前,不挡发送(D4)。
-                  * 和 `PlanPill` 不同:那枚是钉在 composer 上方的,这张在流水里随内容滚。
+                  * 不挡发送(D4)。和 `PlanPill` 不同:那枚是钉在 composer 上方的,
+                  * 这张在流水里随内容滚。
+                  *
+                  * ⚠️ **这里画的只剩「没有轮次可锚」那一档。** T61 之后,有主的读数
+                  * 由锚点那一轮自己画(`ChatRows` 的 `lowBalanceTurnCards`)——
+                  * 卡是「那一轮为什么停」的凭据,不能钉在流水末尾跟着新一轮往下跑。
+                  * 剩在这儿的是拦截档:那一轮已经被 `retractPaintedTurn` 收回,
+                  * 没有 run 也就没有轮次,读数不摆在末尾就彻底没地方说了。
                   */}
-                {amrBalanceCardUsd != null ? (
+                {tailAmrBalanceCardUsd != null ? (
                   <UpgradeCard
-                    balanceUsd={amrBalanceCardUsd}
+                    balanceUsd={tailAmrBalanceCardUsd}
                     onUpgrade={
                       onAmrBalanceUpgrade ?? (() => openAmrPlans('chat_upgrade_card'))
                     }
@@ -5066,6 +5104,8 @@ function ChatRows({
   items,
   messages,
   streaming,
+  lowBalanceTurnCards,
+  onLowBalanceTurnCardUpgrade,
   onResendUserMessage,
   onRetryImage,
   projectId,
@@ -5135,6 +5175,15 @@ function ChatRows({
    * 「上一轮宣布过哪些待办」和「助手换没换人」数的是真实回合,不是画出来的行。
    */
   messages: ChatMessage[];
+  /**
+   * 每一轮各自那张升级卡:key = 那一轮助手消息的 id,value = 那一轮结束时的余额。
+   *
+   * 卡就画在这条助手消息**紧下面**,和它同一个虚拟行 —— T61 要的「锚定在那一轮
+   * 下面、第二轮跑起来时不许挪」是这样成立的,不靠任何位置计算。
+   */
+  lowBalanceTurnCards?: ReadonlyMap<string, number>;
+  /** 升级卡那颗按钮。落点由宿主决定,和流水末尾那张同一个 handler。 */
+  onLowBalanceTurnCardUpgrade?: () => void;
   onResendUserMessage?: (message: ChatMessage) => void;
   /** 生图失败格的「重试」—— 见 ChatPane 的 handleRetryImage(D59) */
   onRetryImage?: (row: { total: number; done: number; failed: number }, index: number) => void;
@@ -5264,7 +5313,13 @@ function ChatRows({
         />
       );
     }
-    return (
+    /*
+     * 这一轮结束时留下的那张升级卡(T61)。画在助手消息**紧下面、同一行内**:
+     * 位置由 DOM 顺序本身保证,新一轮追加在后面,它自然就留在原处 ——
+     * 不需要任何「记住第几个位置」的计算,也就没有算错的可能。
+     */
+    const turnBalanceUsd = lowBalanceTurnCards?.get(m.id);
+    const assistantRow = (
       <AssistantMessage
         message={m}
         streaming={messageStreaming}
@@ -5371,6 +5426,13 @@ function ChatRows({
         nextStepSkills={nextStepSkills}
         nextStepVariant={nextStepVariant}
       />
+    );
+    if (turnBalanceUsd == null) return assistantRow;
+    return (
+      <>
+        {assistantRow}
+        <UpgradeCard balanceUsd={turnBalanceUsd} onUpgrade={onLowBalanceTurnCardUpgrade} />
+      </>
     );
   };
 
@@ -6176,6 +6238,58 @@ function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
 
 function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
+}
+
+/**
+ * **这一轮跑完了没有。**
+ *
+ * 「跑完」= daemon 对这一个 run 的终态裁定,三种都算:`succeeded` / `failed` /
+ * `canceled`。**只认 `succeeded` 是错的** —— 「跑挂了」和「被用户按停」恰恰是
+ * 最需要留下凭据的两种收尾(T61 那句「我往回看那一轮为啥失败了」说的就是它们)。
+ *
+ * `runStatus` 缺席但已经落了 `endedAt` 的那一格也算完:非 daemon 模式建消息时
+ * `runStatus` 本来就是 `undefined`(`ProjectView` 那条 `config.mode === 'daemon'`
+ * 三目),历史落库的旧消息同理。判据和 `runtime/todos.ts` 认「这一轮收尾了」是
+ * 同一条,两处不另算。`queued` / `running` 由 `undefined` 这道守卫排除在外。
+ */
+function isFinishedTurn(message: ChatMessage): boolean {
+  if (isTerminalRunStatus(message.runStatus)) return true;
+  return message.runStatus === undefined && message.endedAt !== undefined;
+}
+
+/**
+ * 把「这一轮结束时的余额」记进账本 —— **升级卡按轮次存档的唯一写入口**(T61)。
+ *
+ * 三条不变量,缺一条就会退回产品否掉的那个形态:
+ *
+ * - **运行中不写。** 锚点那一轮还在跑(或还在排队)就什么都不记,于是屏幕上也
+ *   画不出卡。这是 T61 ① 的全部实现 —— 出现时机由那一轮**自己的收尾状态**决定,
+ *   不由读数什么时候到决定。
+ * - **只增不删。** 记过的那一轮永远留着,哪怕后来余额涨回放行档、读数被撤掉。
+ *   产品原话「不能说我干个啥把当时的失败态搞丢了」;卡是历史记录,不是当前读数。
+ * - **锚点换人就冻。** 同一个锚点在场期间允许覆写(发送前闸门读到的是**跑之前**
+ *   的余额,跑到一半死在钱上那次补查读到的才是**停下来时**的;后者更该是凭据)。
+ *   一旦 `ProjectView` 把锚点交给下一轮,上一轮那格就再没人写得动了。
+ *
+ * 就地改 `archive`,不返回新 Map:调用方在渲染中同步读它,新建对象只会让
+ * `ChatRows` 每次拿到不同身份的 prop,白赔一次比较。
+ */
+function archiveLowBalanceTurnCard(
+  archive: Map<string, number>,
+  input: {
+    messages: ChatMessage[];
+    anchorMessageId: string | null | undefined;
+    balanceUsd: number | null | undefined;
+  },
+): void {
+  const { anchorMessageId, balanceUsd } = input;
+  if (!anchorMessageId || balanceUsd == null) return;
+  const anchor = input.messages.find((message) => message.id === anchorMessageId);
+  // 锚点不在这条会话里 = 切走了 / 那一轮被收回了。既然挂不上去,就不画 ——
+  // 退回流水末尾会把一份别的会话的读数扣在这条会话的最后一轮头上。
+  if (!anchor || anchor.role !== 'assistant') return;
+  if (!isFinishedTurn(anchor)) return;
+  archive.set(anchorMessageId, balanceUsd);
 }
 
 export function retryableAssistantMessage(

@@ -418,8 +418,8 @@ describe('resolveRunFailureUi', () => {
       // is signed out, throttled, out of credit, or the upstream is down. Those
       // arrive with their own codes and must never inherit "change your CLI".
       const neighbours: Array<[string, string]> = [
-        ['AGENT_AUTH_REQUIRED', 'chat.runError.title.signInRequired'],
-        ['UNAUTHORIZED', 'chat.runError.title.signInRequired'],
+        ['AGENT_AUTH_REQUIRED', 'chat.runError.title.signInRequired.other'],
+        ['UNAUTHORIZED', 'chat.runError.title.signInRequired.other'],
         ['RATE_LIMITED', 'chat.runError.title.rateLimited'],
         ['UPSTREAM_UNAVAILABLE', 'chat.runError.title.upstreamUnavailable'],
       ];
@@ -470,7 +470,7 @@ describe('resolveRunFailureUi', () => {
     const ui = resolveRunFailureUi('AMR_AUTH_REQUIRED', null, 'amr');
     expect(ui).toMatchObject({
       primaryAction: 'authorize',
-      titleKey: 'chat.runError.title.signInRequired',
+      titleKey: 'chat.runError.title.signInRequired.amr',
       // AMR-specific sign-in copy; single CTA, no AMR promotion card.
       messageKey: 'chat.runError.signInMessage.amr',
       secondaryRetry: false,
@@ -487,7 +487,7 @@ describe('resolveRunFailureUi', () => {
         const ui = resolveRunFailureUi(code, null, agent);
         expect(ui).toMatchObject({
           primaryAction: 'retry',
-          titleKey: 'chat.runError.title.signInRequired',
+          titleKey: 'chat.runError.title.signInRequired.other',
           messageKey: 'chat.runError.signInMessage.other',
           secondaryRetry: false,
           showSwitchCard: true,

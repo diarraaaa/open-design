@@ -580,7 +580,7 @@ test('[P0] real daemon run classifies a Claude mid-stream socket drop as a retry
   // classified as AGENT_CONNECTION_DROPPED and the error card shows the
   // localized chat.connectionDropped copy (en locale here) instead of echoing
   // the raw SDK string verbatim.
-  await expect(runErrorCard(page)).toContainText('connection to the model service dropped', {
+  await expect(runErrorCard(page)).toContainText('Check that your network connection is working', {
     timeout: 15_000,
   });
 });
@@ -616,15 +616,15 @@ test('[P1] real daemon classifies a Claude prompt-too-long result and preserves 
   await sendPrompt(page, 'Return a Claude prompt-too-long failure');
 
   const card = runErrorCard(page);
-  await expect(card).toContainText('Input too long', { timeout: 15_000 });
-  await expect(card).toContainText("exceeded the model's context limit");
+  await expect(card).toContainText('Conversation too long', { timeout: 15_000 });
+  await expect(card).toContainText('exceed what the AI can process');
   await expect(card.getByRole('button', { name: /^Retry$/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Switch to OpenDesign Cloud & retry/i })).toHaveCount(0);
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
-  await expect(runErrorCard(page)).toContainText('Input too long', { timeout: 15_000 });
-  await expect(runErrorCard(page)).toContainText("exceeded the model's context limit");
+  await expect(runErrorCard(page)).toContainText('Conversation too long', { timeout: 15_000 });
+  await expect(runErrorCard(page)).toContainText('exceed what the AI can process');
 });
 
 test('[P0] real daemon run supports a follow-up turn in the same project', async ({ page }) => {
@@ -1034,8 +1034,8 @@ test('[P1] plain stdout daemon runtime surfaces stderr-only failures without gho
 
   const rawError = 'stderr-only daemon smoke failure from fake qwen';
   const card = runErrorCard(page);
-  await expect(card).toContainText('Agent exited unexpectedly', { timeout: 15_000 });
-  await expect(card).toContainText("Qwen exited unexpectedly and didn't say why");
+  await expect(card).toContainText('Task interrupted unexpectedly', { timeout: 15_000 });
+  await expect(card).toContainText('Try generating again, or switch models and retry');
   await expect(card).not.toContainText(rawError);
 
   const { projectId, conversationId } = await currentProjectContext(page);
@@ -1048,8 +1048,8 @@ test('[P1] plain stdout daemon runtime surfaces stderr-only failures without gho
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
-  await expect(runErrorCard(page)).toContainText('Agent exited unexpectedly');
-  await expect(runErrorCard(page)).toContainText("Qwen exited unexpectedly and didn't say why");
+  await expect(runErrorCard(page)).toContainText('Task interrupted unexpectedly');
+  await expect(runErrorCard(page)).toContainText('Try generating again, or switch models and retry');
   await expect(runErrorCard(page)).not.toContainText(rawError);
   expect(await listProjectFiles(page, projectId)).toEqual([]);
 });

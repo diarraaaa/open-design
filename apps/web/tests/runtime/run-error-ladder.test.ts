@@ -119,6 +119,11 @@ describe('S19 进程崩了 / 异常退出(每月 20,868 次、占失败 16.3%、
   //   显示:{智能体} 意外退出了 —— 它没说为什么。重试一般能恢复;反复出现的话,
   //         把日志发给我们。〔重试 | 导出日志〕
   // 「导出日志」是常驻次级(§6.Z),所以这里只钉主按钮 = 重试(档 2)。
+  //
+  // ⚠️ 上面那句是**旧稿**的字面。产品 2026-09-06 的《Open Design 报错文案｜精简版》
+  // 把这一格改写成「任务意外中断 / 请尝试重新生成，或更换模型后重试。如果问题持续
+  // 出现，请联系支持。」—— 分流(titleKey / messageKey / 主按钮)一个字没动,变的
+  // 只有那两条 i18n 值,所以这一族断言照旧成立。
   const S19_DETAILS = [
     'process_crashed',
     'signal_killed',
@@ -180,11 +185,16 @@ describe('新文案进了 19 个语言包', () => {
     }
   });
 
-  // 稿子里 S19 那句是「{智能体} 意外退出了」—— 插值位不能在翻译里掉。
-  it('S19 文案每个语种都保留了 {agent} 插值位', { timeout: 30_000 }, async () => {
+  // 这一条以前钉的是反面:旧稿 S19 那句写作「{智能体} 意外退出了」,插值位不能
+  // 在翻译里掉。产品 2026-09-06 的《报错文案｜精简版》把这一格重写成
+  // 「任务意外中断 / 请尝试重新生成，或更换模型后重试。如果问题持续出现，请联系支持。」
+  // —— 新句子里**没有**任何插值位,所以现在要钉的是它别被某个语种偷偷加回来:
+  // 半退回的旧译文正是这条文案最可能的回归形状(参见 locales.test.ts 里
+  // `cliSessionRefusedMessage` 的 `{version}` 守卫,同一个手法)。
+  it('S19 文案每个语种都不带插值位', { timeout: 30_000 }, async () => {
     for (const path of localeModulePaths()) {
       const dict = await loadLocaleDict(path);
-      expect(dict['chat.runError.agentCrashedMessage'], path).toContain('{agent}');
+      expect(dict['chat.runError.agentCrashedMessage'], path).not.toMatch(/\{\w+\}/);
     }
   });
 });
