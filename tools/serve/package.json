@@ -3,6 +3,12 @@
   "version": "0.6.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./standalone-exact-client": {
+      "types": "./dist/standalone-exact-client.d.ts",
+      "default": "./dist/standalone-exact-client.mjs"
+    }
+  },
   "bin": {
     "tools-serve": "./bin/tools-serve.mjs"
   },
@@ -13,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit"
   },
   "dependencies": {
+    "@open-design/download": "workspace:*",
     "@open-design/release": "workspace:*",
     "@open-design/standalone": "workspace:*",
     "cac": "6.7.14"

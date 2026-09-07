@@ -63,6 +63,7 @@ import { rewriteCliArgsForDefaultStart } from "./cli-args.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
 import { buildDevClosureResources } from "./closure-resources.js";
+import { withStandaloneExactFixture, type StandaloneFixtureFiles } from "@open-design/tools-serve/standalone-exact-client";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -560,21 +561,19 @@ async function invokeElectronLifecycle(config: ToolDevConfig, operation: Electro
   const requestPath = path.join(config.apps.desktop.controlRuntimeRoot, `${operationFileName}-request.json`);
   const receiptPath = path.join(config.apps.desktop.controlRuntimeRoot, `${operationFileName}-receipt.json`);
   try {
+    const invoke = async (installationInput?: StandaloneFixtureFiles) => {
     const request = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       operation,
       channel: "dev",
       namespace: config.namespace,
       controlRuntimeRoot: config.apps.desktop.controlRuntimeRoot,
       ...(operation === "electron.dev.start" ? {
-        bootstrapUrl: options.standaloneBootstrapUrl ?? process.env.OD_ELECTRON_STANDALONE_BOOTSTRAP_URL,
+        installationInput,
         installationRoot: config.apps.desktop.installationRoot,
         ownerPid: options.parentPid ?? null,
       } : {}),
     };
-    if (operation === "electron.dev.start" && request.bootstrapUrl == null) {
-      throw new Error("--standalone-bootstrap-url is required for tools-dev desktop");
-    }
     await mkdir(config.apps.desktop.controlRuntimeRoot, { recursive: true });
     await rm(receiptPath, { force: true });
     await writeFile(requestPath, `${JSON.stringify(request, null, 2)}\n`, "utf8");
@@ -587,6 +586,11 @@ async function invokeElectronLifecycle(config: ToolDevConfig, operation: Electro
       logFd: logHandle.fd,
     });
     return JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    };
+    if (operation !== "electron.dev.start") return await invoke();
+    const bootstrapUrl = options.standaloneBootstrapUrl ?? process.env.OD_ELECTRON_STANDALONE_BOOTSTRAP_URL;
+    if (bootstrapUrl == null) throw new Error("--standalone-bootstrap-url is required for tools-dev desktop");
+    return await withStandaloneExactFixture({ bootstrapUrl, scratchRoot: path.join(config.apps.desktop.controlRuntimeRoot, "acquisition") }, invoke);
   } finally {
     await logHandle.close();
   }

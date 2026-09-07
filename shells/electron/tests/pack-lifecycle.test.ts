@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import manifest from "../config/shell.json" with { type: "json" };
 
 import type { ElectronShellManifest } from "@open-design/electron-kit/contracts";
-import { createElectronPackManifest, parseElectronPackRequest } from "../scripts/pack-lifecycle.js";
+import { createElectronPackManifest, parseElectronPackRequest } from "@/adapters/tools/pack-tool.js";
 import {
   assertElectronDistributionBinding,
   createElectronReleaseManifest,
@@ -53,9 +53,9 @@ describe("Electron pack adapter contract", () => {
 
   it("accepts one finite Shell-owned build request", () => {
     expect(parseElectronPackRequest({
-      schemaVersion: 1,
+      schemaVersion: 2,
       operation: "electron.pack.build",
-      bootstrapUrl: "http://127.0.0.1:43123/bootstrap.json",
+      installationInput: { channel: "betahyx", releaseVersion: "0.1.0-betahyx.1", channelHeadUrl: "http://127.0.0.1/latest/channel-head.json", contentFile: resolve(".tmp/content.json"), trustFile: resolve(".tmp/trust.json"), seedFiles: [resolve(".tmp/seed.mjs")] },
       channel: "betahyx",
       installationRoot: resolve(".tmp/installation"),
       namespace: "release-betahyx",
@@ -66,9 +66,9 @@ describe("Electron pack adapter contract", () => {
 
   it("rejects extra fields instead of growing an implicit tools contract", () => {
     expect(() => parseElectronPackRequest({
-      schemaVersion: 1,
+      schemaVersion: 2,
       operation: "electron.pack.build",
-      bootstrapUrl: "http://127.0.0.1/bootstrap.json",
+      installationInput: { channel: "betahyx", releaseVersion: "0.1.0-betahyx.1", channelHeadUrl: "http://127.0.0.1/latest/channel-head.json", contentFile: resolve(".tmp/content.json"), trustFile: resolve(".tmp/trust.json"), seedFiles: [resolve(".tmp/seed.mjs")] },
       channel: "betahyx",
       installationRoot: resolve(".tmp/installation"),
       namespace: "release-betahyx",
@@ -80,9 +80,9 @@ describe("Electron pack adapter contract", () => {
 
   it("uses the channel release version without changing Shell compatibility", () => {
     const request = parseElectronPackRequest({
-      schemaVersion: 1,
+      schemaVersion: 2,
       operation: "electron.pack.build",
-      bootstrapUrl: "https://releases.example/betahyx/bootstrap.json",
+      installationInput: { channel: "betahyx", releaseVersion: "0.1.0-betahyx.1", channelHeadUrl: "http://127.0.0.1/latest/channel-head.json", contentFile: resolve(".tmp/content.json"), trustFile: resolve(".tmp/trust.json"), seedFiles: [resolve(".tmp/seed.mjs")] },
       channel: "betahyx",
       installationRoot: resolve(".tmp/installation"),
       namespace: "release-betahyx",
@@ -99,9 +99,9 @@ describe("Electron pack adapter contract", () => {
 
   it("fails closed instead of deriving an undeclared channel identity", () => {
     const request = parseElectronPackRequest({
-      schemaVersion: 1,
+      schemaVersion: 2,
       operation: "electron.pack.build",
-      bootstrapUrl: "https://releases.example/unknown/bootstrap.json",
+      installationInput: { channel: "betahyx", releaseVersion: "0.1.0-betahyx.1", channelHeadUrl: "http://127.0.0.1/latest/channel-head.json", contentFile: resolve(".tmp/content.json"), trustFile: resolve(".tmp/trust.json"), seedFiles: [resolve(".tmp/seed.mjs")] },
       channel: "unknown",
       installationRoot: resolve(".tmp/installation"),
       namespace: "release-unknown",

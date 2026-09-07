@@ -292,7 +292,7 @@ async function resolvePackedMacStartTarget(config: ToolPackConfig): Promise<{
   }
 
   throw new Error(
-    `no mac .app executable found for namespace=${config.namespace}; run tools-pack mac build --to all and tools-pack mac install first`,
+    `no mac .app executable found for namespace=${config.namespace}; run tools-pack mac build and tools-pack mac install first`,
   );
 }
 
@@ -301,7 +301,7 @@ async function resolveBuiltArtifact(config: ToolPackConfig, suffix: string): Pro
 }
 
 type MacShellPackReceipt = Readonly<{
-  schemaVersion: 1;
+  schemaVersion: 2;
   operation: "electron.pack.build";
   identity: Readonly<{ appBundleName: string; executableName: string }>;
   distribution: Readonly<{ platform: "mac"; artifacts: readonly string[] }>;
@@ -314,7 +314,7 @@ function artifactFromShellReceipt(receipt: MacShellPackReceipt, suffix: string):
 async function readMacShellPackReceipt(config: ToolPackConfig): Promise<MacShellPackReceipt> {
   const receiptPath = join(config.roots.output.namespaceRoot, "shell-pack-receipt.json");
   const receipt = JSON.parse(await readFile(receiptPath, "utf8").catch(() => "null")) as MacShellPackReceipt | null;
-  if (receipt?.schemaVersion !== 1 || receipt.operation !== "electron.pack.build"
+  if (receipt?.schemaVersion !== 2 || receipt.operation !== "electron.pack.build"
     || receipt.distribution?.platform !== "mac" || !Array.isArray(receipt.distribution.artifacts)
     || typeof receipt.identity?.appBundleName !== "string" || typeof receipt.identity.executableName !== "string") {
     throw new Error("mac lifecycle requires a valid Shell pack receipt; run tools-pack mac build first");

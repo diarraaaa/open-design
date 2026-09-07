@@ -12,11 +12,13 @@ export async function buildElectronStandaloneAuthority(outputRoot: string) {
   const updaterProviderPath = resolve(root, "electron-updater.mjs");
   const supervisorPath = resolve(root, "supervisor.mjs");
   const shared = { bundle: true, format: "esm", platform: "node", target: "node24" } satisfies BuildOptions;
-  await Promise.all([
+  const outcomes = await Promise.allSettled([
     build({ ...shared, entryPoints: [fileURLToPath(new URL("./updater-provider.ts", import.meta.url))], outfile: updaterProviderPath }),
     build({ ...shared, entryPoints: [fileURLToPath(new URL("./host.ts", import.meta.url))], outfile: hostPath }),
     copyFile(fileURLToPath(import.meta.resolve("@open-design/sidecar/resources/supervisor.mjs")), supervisorPath),
   ]);
+  const failure = outcomes.find(result => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
   return Object.freeze({
     host: Object.freeze({ name: "standalone-host.mjs", path: hostPath }),
     updaterProvider: Object.freeze({ name: "electron-updater.mjs", path: updaterProviderPath }),

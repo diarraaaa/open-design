@@ -9,7 +9,7 @@
  */
 
 import { lstat, mkdir, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { LOCK_DIR, PARTIAL_DIR, STATE_DIR, STORE_KIND, STORE_SCHEMA_VERSION, STORE_SENTINEL } from "./constants.js";
 import { MANAGED_DOWNLOAD_ERROR_CODES, ManagedDownloadError } from "./errors.js";
@@ -124,7 +124,7 @@ async function ensureStoreDirs(basePath: string): Promise<void> {
  * claim an empty unmarked directory, reject foreign/non-empty or invalid-marker
  * directories, and guarantee the scratch layout exists.
  */
-export async function ensureManagedBase(basePath: string): Promise<void> {
+async function ensureManagedBaseOnce(basePath: string): Promise<void> {
   await mkdir(basePath, { recursive: true });
   const entry = await lstat(basePath);
   if (!entry.isDirectory() || entry.isSymbolicLink()) {
@@ -144,4 +144,16 @@ export async function ensureManagedBase(basePath: string): Promise<void> {
     throw new ManagedDownloadError(MANAGED_DOWNLOAD_ERROR_CODES.STORE_NOT_OWNED, `download base has an invalid ownership marker: ${basePath}`);
   }
   await ensureStoreDirs(basePath);
+}
+
+// Different targets may enter one empty base together. Coalesce only this
+// process's in-flight initialization; do not retain a cached ownership verdict.
+const pendingInitializations = new Map<string, Promise<void>>();
+export function ensureManagedBase(basePath: string): Promise<void> {
+  const key = resolve(basePath);
+  const existing = pendingInitializations.get(key);
+  if (existing != null) return existing;
+  const pending = ensureManagedBaseOnce(key).finally(() => pendingInitializations.delete(key));
+  pendingInitializations.set(key, pending);
+  return pending;
 }

@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ import {
   loadElectronStandaloneInstallation,
 } from "@/adapters/standalone/installation.js";
 import { loadElectronStandaloneAuthorityResources } from "@/adapters/standalone/installation.js";
+import { withElectronInstallation } from "@/adapters/standalone/assemble-installation.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true }))); });
@@ -89,6 +90,44 @@ async function installedFixture() {
 }
 
 describe("Electron Standalone installed authority input", () => {
+  it("assembles local input files and discards only its temporary product installation", async () => {
+    const fixture = await installedFixture();
+    let staged = "";
+    const result = await withElectronInstallation({
+      input: { channel: "betahyx", releaseVersion: fixture.declaration.releaseVersion,
+        channelHeadUrl: fixture.declaration.update.channelHeadUrl,
+        contentFile: join(fixture.root, fixture.declaration.content.file), trustFile: join(fixture.root, fixture.declaration.trust.file),
+        seedFiles: fixture.declaration.seeds.map(seed => join(fixture.root, seed.file)),
+      }, outputDirectory: fixture.root, target: "darwin-arm64",
+    }, async installation => {
+      staged = installation.resourceDirectory;
+      expect(staged).not.toBe(fixture.root);
+      const loaded = await loadElectronStandaloneInstallation({ resourceRoot: staged, channel: "betahyx", target: "darwin-arm64" });
+      return loaded.declaration.releaseVersion;
+    });
+    expect(result).toBe(fixture.declaration.releaseVersion);
+    await expect(readFile(join(staged, ELECTRON_STANDALONE_INSTALLATION_FILE))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(fixture.root, ELECTRON_STANDALONE_INSTALLATION_FILE), "utf8")).not.toBe("");
+  });
+  it("preserves accepted scene authority bytes instead of rebuilding them during distribution", async () => {
+    const fixture = await installedFixture();
+    await withElectronInstallation({
+      input: { channel: "betahyx", releaseVersion: fixture.declaration.releaseVersion,
+        channelHeadUrl: fixture.declaration.update.channelHeadUrl,
+        contentFile: join(fixture.root, fixture.declaration.content.file), trustFile: join(fixture.root, fixture.declaration.trust.file),
+        seedFiles: fixture.declaration.seeds.map(seed => join(fixture.root, seed.file)),
+      }, outputDirectory: fixture.root, target: "darwin-arm64",
+      authority: {
+        host: { name: "standalone-host.mjs", path: join(fixture.root, fixture.declaration.host.file) },
+        updaterProvider: { name: "electron-updater.mjs", path: join(fixture.root, fixture.declaration.updaterProvider.file) },
+        supervisor: { name: "supervisor.mjs", path: join(fixture.root, fixture.declaration.supervisor.file) },
+      },
+    }, async installation => {
+      for (const file of ["standalone-host.mjs", "electron-updater.mjs", "supervisor.mjs"]) {
+        expect(await readFile(join(installation.resourceDirectory, file))).toEqual(await readFile(join(fixture.root, file)));
+      }
+    });
+  });
   it("uses the installed descriptor schema for build resource projection", async () => {
     const fixture = await installedFixture();
     await writeFile(join(fixture.root, ELECTRON_STANDALONE_INSTALLATION_FILE), canonicalJson({

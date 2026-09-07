@@ -9,7 +9,7 @@ It does not import `electron-kit`, assemble Electron applications, define
 product handlers, own a second process model, or publish releases.
 
 ```sh
-pnpm tools-pack mac build --to all \
+pnpm tools-pack mac build \
   --namespace release-betahyx \
   --app-version 0.1.0-betahyx.1 \
   --standalone-bootstrap-url http://127.0.0.1:61127/bootstrap.json

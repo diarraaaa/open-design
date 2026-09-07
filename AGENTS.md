@@ -421,7 +421,7 @@ pnpm --filter @open-design/tools-serve build
 ```
 
 ```bash
-pnpm tools-pack mac build --to all
+pnpm tools-pack mac build
 pnpm tools-pack mac install
 pnpm tools-pack mac cleanup
 ```

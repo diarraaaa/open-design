@@ -47,7 +47,7 @@ pnpm --filter @open-design/tools-release test
 pnpm tools-dev status --json
 pnpm tools-dev logs --json
 pnpm tools-dev check
-pnpm tools-pack mac build --to all
+pnpm tools-pack mac build
 pnpm tools-pack mac install
 pnpm tools-pack mac cleanup
 pnpm tools-serve start updater

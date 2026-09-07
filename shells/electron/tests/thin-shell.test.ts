@@ -11,24 +11,37 @@ async function shellSources(): Promise<Array<Readonly<{ name: string; source: st
 }
 
 describe("Electron product shell", () => {
+  it("keeps scripts as file-envelope entrypoints, never a second implementation layer", async () => {
+    const root = new URL("../scripts/", import.meta.url);
+    const files = (await readdir(root)).sort();
+    expect(files).toEqual(["dev-lifecycle.ts", "exact-distribution.ts", "exact-scene.ts", "pack-lifecycle.ts", "release-manifest.ts", "runtime-lifecycle.ts", "scene-manifest.ts"]);
+    for (const file of files) {
+      const source = await readFile(new URL(file, root), "utf8");
+      expect(source, file).toContain("await runShellFileCommand(");
+      expect(source, file).not.toMatch(/\bfunction\b|=>|process\.|fetch\(|@open-design|node:/u);
+      for (const line of source.split("\n").filter(line => line.startsWith("import "))) {
+        expect(line, file).toContain('from "../src/adapters/tools/');
+      }
+    }
+  });
   it("keeps dev and pack as thin electron-kit entrypoints", async () => {
     const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> };
-    expect(packageJson.scripts.dev).toBe("node ./scripts/dev.mjs");
+    expect(packageJson.scripts).not.toHaveProperty("dev");
     expect(packageJson.scripts["exact:distribution"]).toBe("node ./scripts/exact-distribution.ts");
     expect(packageJson.scripts["exact:scene"]).toBe("node ./scripts/exact-scene.ts");
-    expect(packageJson.scripts.pack).toBe("node ./scripts/pack.mjs");
-    expect(packageJson.scripts.prepack).toBe(packageJson.scripts.pack);
+    expect(packageJson.scripts).not.toHaveProperty("pack");
+    expect(packageJson.scripts).not.toHaveProperty("prepack");
     const [dev, pack] = await Promise.all([
-      readFile(new URL("../scripts/dev.mjs", import.meta.url), "utf8"),
-      readFile(new URL("../scripts/pack.mjs", import.meta.url), "utf8"),
+      readFile(new URL("../scripts/dev-lifecycle.ts", import.meta.url), "utf8"),
+      readFile(new URL("../scripts/pack-lifecycle.ts", import.meta.url), "utf8"),
     ]);
     expect(dev).not.toContain("distribution.json");
     expect(dev).not.toMatch(/fixture-sidecar|createElectronFixture/u);
     expect(pack).not.toMatch(/fixture-sidecar|createElectronFixture/u);
-    expect(dev).toContain("OD_ELECTRON_STANDALONE_RESOURCE_ROOT");
-    expect(pack).toContain("OD_ELECTRON_STANDALONE_RESOURCE_ROOT");
-    expect(pack).toContain('new URL("../config/distribution.json"');
-    expect(pack).toContain('new URL("../config/platforms/windows.json"');
+    for (const entry of [dev, pack]) {
+      expect(entry).toContain("runShellFileCommand");
+      expect(entry).not.toMatch(/@open-design|process\.|fetch\(|build\(/u);
+    }
   });
 
   it("owns finite macOS and Windows distribution policy", async () => {
@@ -93,7 +106,7 @@ describe("Electron product shell", () => {
     }
     for (const file of sources) {
       expect(file.source, file.name).not.toMatch(/apps\/closure|apps\/web|apps\/daemon/u);
-      if (!file.name.startsWith("adapters/standalone/")) {
+      if (!file.name.startsWith("adapters/standalone/") && !file.name.startsWith("adapters/tools/")) {
         expect(file.source, file.name).not.toMatch(/@open-design\/(?:sidecar|standalone)/u);
       }
     }
@@ -155,15 +168,15 @@ describe("Electron product shell", () => {
 
   it("keeps a Shell-local copy of the same official Node lock", async () => {
     const [dev, pack, electronLock, terminalLock] = await Promise.all([
-      readFile(new URL("../scripts/dev.mjs", import.meta.url), "utf8"),
-      readFile(new URL("../scripts/pack.mjs", import.meta.url), "utf8"),
+      readFile(new URL("../src/adapters/tools/dev-tool.ts", import.meta.url), "utf8"),
+      readFile(new URL("../src/adapters/tools/pack-tool.ts", import.meta.url), "utf8"),
       readFile(new URL("../config/carriers/node-lock.json", import.meta.url), "utf8"),
       readFile(new URL("../../terminal/node-lock.json", import.meta.url), "utf8"),
     ]);
-    expect(dev).toContain('new URL("../config/carriers/node-lock.json"');
-    expect(pack).toContain('new URL("../config/carriers/node-lock.json"');
-    expect(dev).toContain('new URL("../config/runtime.json"');
-    expect(pack).toContain('new URL("../config/runtime.json"');
+    expect(dev).toContain('new URL("../../../config/carriers/node-lock.json"');
+    expect(pack).toContain('new URL("../../../config/carriers/node-lock.json"');
+    expect(dev).toContain('new URL("../../../config/runtime.json"');
+    expect(pack).toContain('new URL("../../../config/runtime.json"');
     expect(dev).not.toMatch(/node-v\d/u);
     expect(pack).not.toMatch(/node-v\d/u);
     expect(JSON.parse(electronLock)).toEqual(JSON.parse(terminalLock));

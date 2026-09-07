@@ -7,9 +7,9 @@
  * and are imported by the store, manifest, lock, transfer, and run concerns.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -44,9 +44,13 @@ export async function readJson<T>(path: string): Promise<T | null> {
  */
 export async function writeJson(path: string, payload: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now().toString(36)}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await rename(tmp, path);
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    await rename(tmp, path);
+  } finally {
+    await rm(tmp, { force: true });
+  }
 }
 
 /**

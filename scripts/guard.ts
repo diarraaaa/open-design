@@ -128,10 +128,6 @@ const residualAllowedExactPaths = new Set([
   "tools/release/esbuild.config.mjs",
   "tools/serve/bin/tools-serve.mjs",
   "tools/serve/esbuild.config.mjs",
-  // Electron Shell owns these deliberately tiny Node entrypoints. They only
-  // translate pnpm's exact dev/pack commands into electron-kit library calls.
-  "shells/electron/scripts/dev.mjs",
-  "shells/electron/scripts/pack.mjs",
   // Materialized by the Standalone store and imported directly by official Node.
   "shells/electron/tests/fixtures/standalone-launcher.mjs",
   // Copied as a content-addressed launcher and imported by the native Terminal

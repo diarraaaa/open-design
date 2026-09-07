@@ -52,27 +52,31 @@ transport or control-session wrapper. The deleted phase-one fixture is not a
 fallback path and no temporary desktop handler protocol is published.
 
 ```sh
-pnpm -C shells/electron dev
-pnpm -C shells/electron dev -- --headless
-pnpm -C shells/electron pack
+pnpm tools-dev prepare closure --output .tmp/dev-resources
+# Serve that development receipt with tools-serve start standalone-exact.
+pnpm tools-dev start desktop --standalone-bootstrap-url <fixture-bootstrap-url>
+pnpm tools-dev inspect desktop status --json
+pnpm tools-pack mac build --standalone-bootstrap-url <fixture-bootstrap-url>
 ```
 
 Headless mode completes the same lifecycle, explicit-readiness, protocol, and
 hidden-renderer mount sequence without creating a splash or revealing/focusing
 a window. `ELECTRON_KIT_HEADLESS=1` is the environment equivalent.
 
-`pack` emits a macOS `.app` and `.dmg` under `dist/` on macOS. Windows emits a
-directory build and NSIS installer on a Windows host. Its ephemeral NSIS include
+`tools-pack mac build` emits a macOS `.app` and `.dmg` in its selected output root.
+The Windows distribution adapter supports a directory build and NSIS installer on a Windows host; local Windows tooling acceptance follows separately. Its ephemeral NSIS include
 projects the shared Shell identity into App Paths and protocol registration, with
 owner-checked cleanup; it is loaded from electron-kit's packaged resources and never
 enters the release-neutral scene. The production `createStandaloneAuthority`
 adapter consumes signed exact content, the Standalone updater/runtime-handle
 contracts, and Sidecar guarded resource sets; the Shell does not import Closure
 implementation.
-The standard `prepack` lifecycle intentionally points at the same Shell-owned
-`scripts/pack.mjs` shim, because pnpm reserves `pack` as a built-in command.
+There are no package-local `dev`, `pack`, or `prepack` lifecycle shortcuts.
+Tools acquire local fixture files through the fixture producer's client, then
+invoke typed Shell adapters with local installation inputs. The Shell does not
+understand loopback bootstrap documents or download development fixtures.
 `config/carriers/node-lock.json` is Shell-local but byte-for-byte aligned with Terminal's
 official Node lock; tests prevent the two supported carriers from drifting.
-The lock is consumed by the thin `dev.mjs`/`pack.mjs` shims and the packaged
+The lock is consumed by the product dev/pack adapters and the packaged
 runtime. The verified carrier executes the production Fossil host; electron-kit
 does not expose a bin and the Shell never imports another Shell at runtime.

@@ -2,12 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
+import { withStandaloneExactFixture } from "@open-design/tools-serve/standalone-exact-client";
 
 import type { ToolPackConfig } from "../config/index.js";
 import { runPnpm } from "./commands.js";
 
 type ShellPackReceipt = Readonly<{
-  schemaVersion: 1;
+  schemaVersion: 2;
   operation: "electron.pack.build";
   channel: string;
   namespace: string;
@@ -36,6 +37,7 @@ export async function packMac(config: ToolPackConfig) {
   if (config.standaloneBootstrapUrl == null) {
     throw new Error("tools-pack mac build requires --standalone-bootstrap-url (or OD_ELECTRON_STANDALONE_BOOTSTRAP_URL)");
   }
+  return await withStandaloneExactFixture({ bootstrapUrl: config.standaloneBootstrapUrl, scratchRoot: join(config.roots.cacheRoot, "fixture-acquisition") }, async (installationInput) => {
   const version = config.appVersion ?? "0.1.0";
   const channel = releaseChannelFromVersion(version)
     ?? releaseChannelFromNamespace(config.namespace)
@@ -44,9 +46,9 @@ export async function packMac(config: ToolPackConfig) {
   const receiptPath = join(config.roots.output.namespaceRoot, "shell-pack-receipt.json");
   await mkdir(config.roots.output.namespaceRoot, { recursive: true });
   await writeFile(requestPath, `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     operation: "electron.pack.build",
-    bootstrapUrl: config.standaloneBootstrapUrl,
+    installationInput,
     channel,
     installationRoot: join(config.roots.cacheRoot, "standalone", channel),
     namespace: config.namespace,
@@ -56,7 +58,7 @@ export async function packMac(config: ToolPackConfig) {
   const startedAt = Date.now();
   await runPnpm(config, ["--filter", "@open-design/shell-electron", "pack:adapter", "--", "--request", requestPath, "--receipt", receiptPath]);
   const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as ShellPackReceipt;
-  if (receipt.schemaVersion !== 1 || receipt.operation !== "electron.pack.build" || receipt.distribution.platform !== "mac") {
+  if (receipt.schemaVersion !== 2 || receipt.operation !== "electron.pack.build" || receipt.distribution.platform !== "mac") {
     throw new Error("Shell pack adapter returned an invalid mac receipt");
   }
   const appPath = artifact(receipt, ".app");
@@ -77,5 +79,6 @@ export async function packMac(config: ToolPackConfig) {
     receiptPath,
     runtimeNamespaceRoot: config.roots.runtime.namespaceRoot,
     timings: [Object.freeze({ phase: "shell-pack", durationMs: Date.now() - startedAt })],
+  });
   });
 }

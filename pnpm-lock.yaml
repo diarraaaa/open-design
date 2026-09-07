@@ -807,6 +807,9 @@ importers:
       '@open-design/standalone':
         specifier: workspace:*
         version: link:../../packages/standalone
+      '@open-design/tools-serve':
+        specifier: workspace:*
+        version: link:../serve
       cac:
         specifier: 6.7.14
         version: 6.7.14
@@ -841,6 +844,9 @@ importers:
       '@open-design/sidecar-proto':
         specifier: workspace:*
         version: link:../../packages/sidecar-proto
+      '@open-design/tools-serve':
+        specifier: workspace:*
+        version: link:../serve
       cac:
         specifier: 6.7.14
         version: 6.7.14
@@ -901,6 +907,9 @@ importers:
 
   tools/serve:
     dependencies:
+      '@open-design/download':
+        specifier: workspace:*
+        version: link:../../packages/download
       '@open-design/release':
         specifier: workspace:*
         version: link:../../packages/release

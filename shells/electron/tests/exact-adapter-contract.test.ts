@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseElectronExactDistributionRequest, parseElectronExactSceneRequest } from "../scripts/exact-adapter-contract.ts";
+import { parseElectronExactDistributionRequest, parseElectronExactSceneRequest } from "@/adapters/tools/exact-contract.js";
 
 const absolute = (name: string) => resolve("/tmp", name);
 
