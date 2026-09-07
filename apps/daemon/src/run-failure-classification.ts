@@ -18,11 +18,17 @@ import {
   isModelWindowLimitFailure,
 } from '@open-design/contracts';
 
-import { classifyAmrAccountFailure } from './integrations/vela-errors.js';
+import {
+  classifyAmrAccountFailure,
+  reportsPlatformProviderCredentialFault,
+} from './integrations/vela-errors.js';
 import { runFailureEvidence } from './services/run-failure-evidence.js';
 import { summarizeRunToolProgress } from './run-diagnostics.js';
 import { isAcpHandshakeRpcErrorText } from './runtimes/acp-handshake-id.js';
-import { classifyAgentServiceFailure } from './runtimes/auth.js';
+import {
+  classifyAgentServiceFailure,
+  reportsToolPrincipalAuthFailure,
+} from './runtimes/auth.js';
 import type { RunResult, RunStatusForAnalytics } from './run-result.js';
 import type { RunAdmissionEvidence } from './runtimes/run-lifecycle-analytics.js';
 
@@ -1016,6 +1022,25 @@ function classifyRunFailureBase(
     );
   }
 
+  // R-053. Claimed here, immediately after the AMR account branches, because
+  // this is the failure that spent the longest being mistaken for one of them.
+  // vela's link gateway turns an upstream 401/403 into an HTTP 500 under its
+  // own code (`services/link/internal/handlers/openai.go:2074`) and words it
+  // "Upstream provider credentials are missing or invalid." — a sentence
+  // `isAuthDetailText` reads as the caller's missing credentials. The
+  // credentials are the platform's, held in the gateway's configuration, so
+  // there is no sign-in for the user to perform and no retry that changes the
+  // answer: the run failed because the service is misconfigured.
+  if (reportsPlatformProviderCredentialFault(text)) {
+    return classification(
+      'upstream_unavailable',
+      'upstream_5xx',
+      inferFailureStageFromEvents(events, 'first_token_wait'),
+      false,
+      'none',
+    );
+  }
+
   /*
    * A forced signal is a STRUCTURAL fact — the child did not report it, the OS
    * or an operator ended the process — so no amount of leftover stderr can
@@ -1201,6 +1226,34 @@ function classifyRunFailureBase(
       'child_close',
       retryableHint ?? true,
       retryableHint === false ? 'none' : 'retry',
+    );
+  }
+
+  // Whose credential failed, asked before what kind of failure it was.
+  //
+  // The `auth` verdict below prescribes `user_action: 'login'`, and the web
+  // renders that as a sign-in the user is expected to perform. It is only true
+  // of a credential the daemon can reach — the agent's own, or the AMR Cloud
+  // session. But this classifier reads one flat blob: `collectFailureText`
+  // (:177) folds `stderr` events into the corpus (:188), so a `gh`, `npm`,
+  // `curl` or MCP credential the agent tripped over mid-run arrives here
+  // wearing the same words. Sending the user to sign in for that is asking them
+  // to do something that cannot work.
+  //
+  // Landed on `tool_error` rather than left to fall through: `tool_error` is
+  // already where the one self-identifying member of this family goes today
+  // (vela's `mcp_auth_required` envelope, via `isToolErrorText` below), so this
+  // joins the existing landing instead of inventing a code. `user_action` is
+  // `'none'` because a missing credential does not fix itself on retry, and the
+  // generic card hands the tool's own line — the one that names what to fix —
+  // back to the user.
+  if (reportsToolPrincipalAuthFailure(text)) {
+    return classification(
+      'tool_error',
+      'tool_error',
+      'tool_execution',
+      false,
+      'none',
     );
   }
 

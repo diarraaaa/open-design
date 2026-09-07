@@ -21,9 +21,21 @@ vi.mock('../src/integrations/vela-errors.js', () => ({
     }
     return null;
   },
+  // vela's link gateway codes for "the PLATFORM's upstream credentials are
+  // broken" (catalogue R-053). Mirrored rather than stubbed to `false` so the
+  // branch this file's texts pass through is the same one production runs.
+  reportsPlatformProviderCredentialFault(text: string) {
+    return /upstream_provider_(?:unauthenticated|forbidden)/i.test(String(text || ''));
+  },
 }));
 
-vi.mock('../src/runtimes/auth.js', () => ({
+// Only `classifyAgentServiceFailure` is stubbed — this suite wants a
+// deterministic service class per row. `reportsToolPrincipalAuthFailure` is
+// kept REAL via `importOriginal`: it answers a different question (whose
+// credential failed), and a hand-written stand-in for it would let these rows
+// pass against a predicate the daemon does not run.
+vi.mock('../src/runtimes/auth.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/runtimes/auth.js')>()),
   classifyAgentServiceFailure(text: string) {
     const value = String(text || '').toLowerCase();
     if (

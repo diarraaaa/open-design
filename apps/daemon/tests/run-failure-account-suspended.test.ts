@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from 'vitest';
 // 桩住它们才能证明「封号是被新分支认出来的」,而不是被别人顺手认领的。
 vi.mock('../src/integrations/vela-errors.js', () => ({
   classifyAmrAccountFailure: () => null,
+  reportsPlatformProviderCredentialFault: () => false,
 }));
 
 vi.mock('../src/runtimes/auth.js', () => ({

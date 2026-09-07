@@ -109,9 +109,46 @@ const ROWS: Row[] = [
   { id: 'C2 session exited', text: 'ACP session exited before completion (code=1, signal=none)', shape: 'bare', codeBefore: null, code: null, category: 'process_exit', detail: 'agent_protocol_error', retryable: true, userAction: 'retry' },
   { id: 'C3 stdin write failed', text: 'stdin write failed: write EPIPE', shape: 'bare', codeBefore: null, code: null, category: 'unknown', detail: 'unknown', retryable: false, userAction: 'none' },
   { id: 'C4 child spawn error', text: 'spawn kimi ENOENT', shape: 'bare', codeBefore: null, code: null, category: 'process_exit', detail: 'cli_not_installed', retryable: false, userAction: 'install_cli' },
-  { id: 'C5 invalid session/new', text: 'invalid session/new response: {"jsonrpc":"2.0","id":2,"result":{}}', shape: 'bare', codeBefore: null, code: null, category: 'auth', detail: 'auth_required', retryable: false, userAction: 'login' },
+  // This row used to read `auth / auth_required / login`, and that verdict was
+  // a substring collision rather than a reading of the failure: the daemon's own
+  // `invalid session/new response: …` line contains `invalid session`, which
+  // `classifyAmrAccountFailure` accepted as "the AMR sign-in session is
+  // invalid". The agent answering `session/new` with an unparseable frame is a
+  // defect in the agent's build, and no sign-in changes it — so the card told
+  // the user to log in for something logging in cannot fix. The classifier now
+  // requires the credential noun to be the whole word (`vela-errors.ts`
+  // `reportsInvalidAuthSession`), and this text stops being an account failure.
+  // It lands `unknown` because nothing else names it yet; naming ACP protocol
+  // violations is catalogue work, not part of un-mislabelling this one.
+  { id: 'C5 invalid session/new', text: 'invalid session/new response: {"jsonrpc":"2.0","id":2,"result":{}}', shape: 'bare', codeBefore: null, code: null, category: 'unknown', detail: 'unknown', retryable: false, userAction: 'none' },
 // ---- adversarial: text whose service-signature may not be the real cause ----
-  { id: 'D1 tool-run 401 from user code', text: 'json-rpc id 4: opencode event stream: tool bash failed: curl: HTTP 401 Unauthorized from https://api.example.com/v1/things', shape: 'structured', codeBefore: 'AGENT_EXECUTION_FAILED', code: 'AGENT_AUTH_REQUIRED', category: 'auth', detail: 'auth_required', retryable: false, userAction: 'login' },
+  // D1 is the row that group header was written about, and it was frozen
+  // KNOWINGLY on the wrong answer. The change that added this table moved its
+  // code axis onto `AGENT_AUTH_REQUIRED` along with every other 401, on the
+  // explicit ground that it was aligning the code axis to a verdict the
+  // classifier already gave ("分析轴 44 条一条没动 … 这是在向已评审的既有行为
+  // 对齐,不是新增一类错判"). That was a deliberate refusal to re-litigate what
+  // the `auth` verdict MEANT — reasonable for a change whose whole claim was
+  // that it moved one axis only, and the reason the row reads `auth /
+  // auth_required / login` here rather than being called a defect.
+  //
+  // The product ruling of 2026-09-07 re-litigates it:「工具输出肯定不算吧?」 —
+  // a credential a TOOL reported cannot be answered with "sign in". The
+  // curl-inside-bash 401 above is the user's own endpoint, reached from a shell
+  // command the agent ran; the sign-in card the old verdict produced offers a
+  // login to Open Design, which does not touch it. Alignment was the right call
+  // for that change and is the wrong resting place: an accurate code pointing at
+  // an inaccurate card is still an inaccurate card.
+  //
+  // `runtimes/auth.ts` `reportsToolPrincipalAuthFailure` now reads the
+  // attribution the line carries (`tool bash failed:`, and `curl:` naming its
+  // own speaker) instead of the auth vocabulary it travels with, so the row
+  // returns to `codeBefore` on the code axis — the ACP alignment simply no
+  // longer has an auth class to align to — and lands `tool_error`, which is
+  // where this family's one self-identifying member (`mcp_auth_required`)
+  // already went. D2 below is the control: same `tool bash failed:` envelope,
+  // no credential, still `UPSTREAM_UNAVAILABLE`.
+  { id: 'D1 tool-run 401 from user code', text: 'json-rpc id 4: opencode event stream: tool bash failed: curl: HTTP 401 Unauthorized from https://api.example.com/v1/things', shape: 'structured', codeBefore: 'AGENT_EXECUTION_FAILED', code: 'AGENT_EXECUTION_FAILED', category: 'tool_error', detail: 'tool_error', retryable: false, userAction: 'none' },
   { id: 'D2 tool-run 503 from user code', text: 'json-rpc id 4: opencode event stream: tool bash failed: upstream returned HTTP 503 Service Unavailable', shape: 'structured', codeBefore: 'AGENT_EXECUTION_FAILED', code: 'UPSTREAM_UNAVAILABLE', category: 'upstream_unavailable', detail: 'upstream_5xx', retryable: false, userAction: 'none' },
   { id: 'D3 internal server error text', text: 'json-rpc id 4: opencode event stream: opencode session error: {"error":{"name":"APIError","data":{"message":"Internal Server Error","statusCode":500,"isRetryable":true}}}', shape: 'structured', payloadRetryable: true, codeBefore: 'AGENT_EXECUTION_FAILED', code: 'UPSTREAM_UNAVAILABLE', category: 'upstream_unavailable', detail: 'upstream_5xx', retryable: true, userAction: 'retry' },
   { id: 'D4 exit code 401 noise', text: 'json-rpc id 2: start opencode server: opencode exited before readiness: exit code 401', shape: 'structured', codeBefore: 'AGENT_EXECUTION_FAILED', code: 'AGENT_EXECUTION_FAILED', category: 'process_exit', detail: 'fatal_rpc_error', retryable: false, userAction: 'none' },
@@ -119,6 +156,23 @@ const ROWS: Row[] = [
   { id: 'D6 session limit reached', text: 'json-rpc id 4: session limit reached for this workspace', shape: 'structured', codeBefore: 'AGENT_EXECUTION_FAILED', code: 'RATE_LIMITED', category: 'rate_limit', detail: 'hard_quota', retryable: false, userAction: 'none' },
   { id: 'D7 amr insufficient wallet balance', text: 'json-rpc id 4: opencode event stream: insufficient wallet balance', shape: 'structured', codeBefore: 'AGENT_EXECUTION_FAILED', code: 'AGENT_EXECUTION_FAILED', category: 'insufficient_balance', detail: 'amr_insufficient_balance', retryable: false, userAction: 'recharge' },
   { id: 'D8 provider overloaded 529', text: 'json-rpc id 4: opencode event stream: {"properties":{"error":{"data":{"message":"[code=upstream_error] 529 overloaded_error: Overloaded"}}}}', shape: 'structured', payloadRetryable: true, codeBefore: 'AGENT_EXECUTION_FAILED', code: 'UPSTREAM_UNAVAILABLE', category: 'upstream_unavailable', detail: 'upstream_5xx', retryable: true, userAction: 'retry' },
+
+  // ---- R-053: the platform's own provider credentials, not the user's ----
+  // `run-error-catalog.md:215` recorded this as mislanded and it stayed that
+  // way: vela's link gateway rewrites an upstream 401/403 into an HTTP 500
+  // carrying its OWN code (`services/link/internal/handlers/openai.go:2074`,
+  // `normalizeUpstreamAuthFailure`), and three separate classifiers each read
+  // it as the caller being signed out — `classifyAmrAccountFailure` off
+  // `unauthenticated`, `classifyAgentServiceFailure` and `isAuthDetailText`
+  // off "credentials are missing". The user was shown "Sign-in required" for a
+  // credential they do not hold and cannot fix.
+  { id: 'E1 upstream_provider_unauthenticated (R-053)', text: 'json-rpc id 4: opencode event stream: {"properties":{"error":{"data":{"message":"\\"[code=upstream_provider_unauthenticated] Upstream provider credentials are missing or invalid.\\""}}}}', shape: 'structured', payloadRetryable: false, codeBefore: 'AGENT_EXECUTION_FAILED', code: 'UPSTREAM_UNAVAILABLE', category: 'upstream_unavailable', detail: 'upstream_5xx', retryable: false, userAction: 'none' },
+  { id: 'E2 upstream_provider_unauthenticated bare', text: 'API request failed with status 500: upstream_provider_unauthenticated', shape: 'structured', payloadRetryable: false, codeBefore: 'AGENT_EXECUTION_FAILED', code: 'UPSTREAM_UNAVAILABLE', category: 'upstream_unavailable', detail: 'upstream_5xx', retryable: false, userAction: 'none' },
+  // The sibling code from the same vela switch (upstream 403). It never
+  // reached the auth branch — it landed `process_exit / fatal_rpc_error`, an
+  // opaque "Task failed" — so naming it here moves it onto the same service
+  // card rather than un-mislabelling it.
+  { id: 'E3 upstream_provider_forbidden', text: 'json-rpc id 4: opencode event stream: [code=upstream_provider_forbidden] Upstream provider rejected access for the configured credentials.', shape: 'structured', payloadRetryable: false, codeBefore: 'AGENT_EXECUTION_FAILED', code: 'UPSTREAM_UNAVAILABLE', category: 'upstream_unavailable', detail: 'upstream_5xx', retryable: false, userAction: 'none' },
 ];
 
 /** The ACP `send('error', …)` bridge in server.ts, as one function. */
@@ -252,11 +306,22 @@ describe('ACP failure landing table', () => {
       'A9 Internal error: 429 rate limit',
       'A13 AMR catalog TEMPORARILY unavailable',
       'A14 AMR catalog + 401',
-      'D1 tool-run 401 from user code',
+      // D1 has LEFT this list. It moved onto `AGENT_AUTH_REQUIRED` when this
+      // table was written and has moved back off it: the credential it reports
+      // belongs to the curl the agent ran, so there is no auth class for the ACP
+      // alignment to align to. See the row for the full reasoning.
       'D2 tool-run 503 from user code',
       'D3 internal server error text',
       'D6 session limit reached',
       'D8 provider overloaded 529',
+      // R-053 and its sibling. These three move because the service classifier
+      // now reads vela's `upstream_provider_*` codes as what they say they are
+      // — the gateway's own credentials — instead of letting the sentence they
+      // travel with ("credentials are missing or invalid") be read as the
+      // caller's.
+      'E1 upstream_provider_unauthenticated (R-053)',
+      'E2 upstream_provider_unauthenticated bare',
+      'E3 upstream_provider_forbidden',
     ]);
   });
 
