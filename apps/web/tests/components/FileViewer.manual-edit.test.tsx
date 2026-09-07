@@ -12,6 +12,7 @@ import type { ProjectFile } from '../../src/types';
 import {
   installFileViewerPreviewRuntimeHarness,
   prepareSettledFileViewerFixture,
+  spyOnManualEditMirrors,
   syntheticPreviewFileSource,
   uninstallFileViewerPreviewRuntimeHarness,
   useSyntheticProjectScopedPreviewNavigation,
@@ -590,7 +591,7 @@ describe('FileViewer manual edit regressions', () => {
     await enterManualEditMode();
     await selectManualEditTarget();
     const frame = await previewFrame();
-    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const postMessage = spyOnManualEditMirrors(frame);
     const textarea = document.querySelector('.manual-edit-right textarea') as HTMLTextAreaElement;
 
     fireEvent.change(textarea, { target: { value: 'Hero edited' } });
@@ -601,11 +602,11 @@ describe('FileViewer manual edit regressions', () => {
         '/api/projects/project-1/files',
         expect.objectContaining({ method: 'POST' }),
       );
-      expect(postMessage).toHaveBeenCalledWith({
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
         type: 'od-edit-preview-text',
         id: 'hero',
         value: 'Hero edited',
-      }, '*');
+      }), '*');
     });
   });
 
@@ -638,7 +639,7 @@ describe('FileViewer manual edit regressions', () => {
       outerHtml: '<main data-od-id="hero"><span>Hero</span></main>',
     });
     const frame = await previewFrame();
-    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const postMessage = spyOnManualEditMirrors(frame);
     const textarea = screen.getByLabelText('Selected element HTML');
 
     fireEvent.change(textarea, {
@@ -653,11 +654,11 @@ describe('FileViewer manual edit regressions', () => {
         '/api/projects/project-1/files',
         expect.objectContaining({ method: 'POST' }),
       );
-      expect(postMessage).toHaveBeenCalledWith({
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
         type: 'od-edit-preview-outer-html',
         id: 'hero',
         html: '<main data-od-id="hero" data-edit-revision="fresh"><span>Hero</span></main>',
-      }, '*');
+      }), '*');
     });
   });
 

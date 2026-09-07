@@ -49,3 +49,59 @@ export function shouldAdoptPersistedManualEditDocument(input: {
   // ordinary replacement path.
   return input.latch.sourceFingerprint === input.sourceFingerprint;
 }
+
+/**
+ * Whether a just-persisted patch may arm the retention latch.
+ *
+ * The latch is armed from ONE patch but fingerprints the WHOLE file, so it can
+ * only ever mean "the live DOM equals these persisted bytes" while every patch
+ * of the session reached the document. Six of the nine patch kinds have no
+ * bridge message at all, and even a bridged one can be refused silently by the
+ * preview document, so a session can carry an edit the DOM never received.
+ *
+ * Once that has happened, a later patch matching proves only that ONE element
+ * is current — the rest of the document is still whatever the unmirrored edit
+ * left behind. `liveDocumentDiverged` is therefore sticky for the session: a
+ * document that fell out of sync cannot talk its way back in, it can only be
+ * replaced.
+ *
+ * Measured before this rule existed: saving a link (`set-link`, no bridge) and
+ * then a style in one session re-armed the latch on the style's match, Manual
+ * Edit exited onto the adopted document, and the preview showed the link's old
+ * text while the file on disk had the new one.
+ */
+export function canArmPersistedManualEditDocument(input: {
+  patchMirroredToLiveDocument: boolean;
+  liveDocumentDiverged: boolean;
+}): boolean {
+  return input.patchMirroredToLiveDocument && !input.liveDocumentDiverged;
+}
+
+/**
+ * Whether the preview may keep suppressing new revisions of this document.
+ *
+ * Manual Edit freezes the preview's document identity so a save's own watcher
+ * echo cannot replace the document the user is editing. That freeze is only
+ * ever justified by the live bridge standing in for the reload: it applies the
+ * persisted bytes to the document already on screen, which is strictly better
+ * than re-rendering them into a fresh browsing context that has lost the page's
+ * canvas, timers, scroll and form state.
+ *
+ * A save the bridge could not mirror removes that justification. Nothing is
+ * keeping the document current any more, so continuing to freeze it does not
+ * preserve a good document — it pins a stale one, and the user's save looks
+ * like it did nothing at all. The freeze lifts for the rest of the session and
+ * the save becomes visible the ordinary way. That costs the page's JS state on
+ * those saves, which is the price of showing the user what they actually saved.
+ */
+export function shouldFreezeManualEditDocumentIdentity(input: {
+  manualEditMode: boolean;
+  manualEditSrcDocActive: boolean;
+  canAdoptPersistedDocument: boolean;
+  liveDocumentDiverged: boolean;
+}): boolean {
+  if (input.liveDocumentDiverged) return false;
+  return input.manualEditMode
+    || input.manualEditSrcDocActive
+    || input.canAdoptPersistedDocument;
+}

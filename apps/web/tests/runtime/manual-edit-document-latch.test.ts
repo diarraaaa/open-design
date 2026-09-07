@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldAdoptPersistedManualEditDocument } from '../../src/runtime/manual-edit-document-latch';
+import {
+  canArmPersistedManualEditDocument,
+  shouldAdoptPersistedManualEditDocument,
+  shouldFreezeManualEditDocumentIdentity,
+} from '../../src/runtime/manual-edit-document-latch';
 
 const base = {
   manualEditMode: false,
@@ -41,5 +45,79 @@ describe('keeping the live document after Manual Edit closes', () => {
 
   it('needs a source to compare against', () => {
     expect(shouldAdoptPersistedManualEditDocument({ ...base, sourceFingerprint: null })).toBe(false);
+  });
+});
+
+describe('arming the latch after a save', () => {
+  it('arms when the bridge carried the persisted bytes into the document', () => {
+    expect(canArmPersistedManualEditDocument({
+      patchMirroredToLiveDocument: true,
+      liveDocumentDiverged: false,
+    })).toBe(true);
+  });
+
+  it('does not arm on a patch that never reached the document', () => {
+    expect(canArmPersistedManualEditDocument({
+      patchMirroredToLiveDocument: false,
+      liveDocumentDiverged: false,
+    })).toBe(false);
+  });
+
+  // The defect: the latch is decided from ONE patch and fingerprints the WHOLE
+  // file, so a mirrored save would otherwise vouch for a document an earlier
+  // unmirrored save in the same session never reached. Divergence is sticky
+  // precisely so this cannot happen.
+  it('never re-arms after an earlier save in the session was not mirrored', () => {
+    expect(canArmPersistedManualEditDocument({
+      patchMirroredToLiveDocument: true,
+      liveDocumentDiverged: true,
+    })).toBe(false);
+  });
+});
+
+describe('freezing the preview document identity during Manual Edit', () => {
+  const frozen = {
+    manualEditMode: true,
+    manualEditSrcDocActive: false,
+    canAdoptPersistedDocument: false,
+    liveDocumentDiverged: false,
+  };
+
+  it('freezes while Edit is open so a save echo cannot replace the document', () => {
+    expect(shouldFreezeManualEditDocumentIdentity(frozen)).toBe(true);
+    expect(shouldFreezeManualEditDocumentIdentity({
+      ...frozen,
+      manualEditMode: false,
+      manualEditSrcDocActive: true,
+    })).toBe(true);
+    expect(shouldFreezeManualEditDocumentIdentity({
+      ...frozen,
+      manualEditMode: false,
+      canAdoptPersistedDocument: true,
+    })).toBe(true);
+  });
+
+  it('does not freeze an ordinary document', () => {
+    expect(shouldFreezeManualEditDocumentIdentity({
+      ...frozen,
+      manualEditMode: false,
+    })).toBe(false);
+  });
+
+  // The defect: the freeze is only justified while the bridge stands in for
+  // the reload. A save it could not carry leaves nothing keeping the document
+  // current, so freezing it pins a stale document and the save looks like a
+  // no-op.
+  it('lifts once a save could not be mirrored, even with Edit still open', () => {
+    expect(shouldFreezeManualEditDocumentIdentity({
+      ...frozen,
+      liveDocumentDiverged: true,
+    })).toBe(false);
+    expect(shouldFreezeManualEditDocumentIdentity({
+      ...frozen,
+      manualEditMode: false,
+      canAdoptPersistedDocument: true,
+      liveDocumentDiverged: true,
+    })).toBe(false);
   });
 });

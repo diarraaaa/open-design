@@ -904,12 +904,70 @@ export function buildManualEditBridge(enabled: boolean): string {
       window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: false, error: e && e.message ? String(e.message) : 'Could not apply preview styles' }, '*');
     }
   }
+  // The bridge's counterpart to findSoleMeaningfulTextNode in the host's
+  // source patcher. A link like "<a><svg/>Label</a>" carries its label in one
+  // text node beside markup that must survive; anything more ambiguous than a
+  // single non-blank text node is refused so a mirror can never guess wrong.
+  function soleMeaningfulTextNode(el){
+    var found = null;
+    var ambiguous = false;
+    function visit(node){
+      if (ambiguous) return;
+      var children = node.childNodes;
+      for (var i = 0; i < children.length && !ambiguous; i++) {
+        var child = children[i];
+        if (child.nodeType === 3) {
+          var parentTag = child.parentElement ? String(child.parentElement.tagName).toLowerCase() : '';
+          var inert = parentTag === 'script' || parentTag === 'style' || parentTag === 'template';
+          if (!inert && String(child.nodeValue == null ? '' : child.nodeValue).trim() !== '') {
+            if (found) { ambiguous = true; return; }
+            found = child;
+          }
+        } else if (child.nodeType === 1) {
+          visit(child);
+        }
+      }
+    }
+    visit(el);
+    return ambiguous ? null : found;
+  }
+  // Mirrors the set-link patch, using the same label rule as the source
+  // patcher so the document and the persisted bytes cannot disagree.
+  function applyPreviewLink(id, text, href){
+    var el = findById(id);
+    if (!el || el === document.body) return false;
+    var label = String(text == null ? '' : text);
+    if (el.children.length === 0) {
+      el.textContent = label;
+    } else if (label.trim() !== String(el.textContent == null ? '' : el.textContent).trim()) {
+      var soleText = soleMeaningfulTextNode(el);
+      if (!soleText) return false;
+      soleText.nodeValue = label;
+    }
+    el.setAttribute('href', String(href == null ? '' : href));
+    return true;
+  }
+  function applyPreviewImage(id, src, alt){
+    var el = findById(id);
+    if (!el || el === document.body) return false;
+    el.setAttribute('src', String(src == null ? '' : src));
+    el.setAttribute('alt', String(alt == null ? '' : alt));
+    return true;
+  }
+  function applyPreviewRemove(id){
+    var el = findById(id);
+    if (!el || el === document.body || !el.parentNode) return false;
+    if (selectedTargetId === id) clearSelectedTarget();
+    el.parentNode.removeChild(el);
+    postTargets();
+    return true;
+  }
   function applyPreviewOuterHtml(id, html){
     var el = findById(id);
-    if (!el || el === document.body || !el.parentNode) return;
+    if (!el || el === document.body || !el.parentNode) return false;
     var template = document.createElement('template');
     template.innerHTML = String(html == null ? '' : html).trim();
-    if (template.content.children.length !== 1) return;
+    if (template.content.children.length !== 1) return false;
     var next = template.content.children[0];
     var retainedAttrs = ['data-od-id', 'data-od-edit', sourcePathAttr, 'data-od-generated-source-path', 'data-od-runtime-id'];
     for (var i = 0; i < retainedAttrs.length; i++) {
@@ -926,6 +984,20 @@ export function buildManualEditBridge(enabled: boolean): string {
       renderSelectedChromeForCurrent();
     }
     postTargets();
+    return true;
+  }
+  // The host cannot see whether a mirror landed — every handler above can
+  // refuse (target gone, nested markup, a container forced to kind "text").
+  // Without this answer a refusal is indistinguishable from success, and the
+  // host would keep a frozen document it believes is current.
+  function answerPreviewApply(ev, id, applied){
+    if (!ev.data || !ev.data.requestId) return;
+    window.parent.postMessage({
+      type: 'od-edit-preview:applied',
+      requestId: ev.data.requestId,
+      id: id || '',
+      applied: !!applied
+    }, '*');
   }
   window.addEventListener('message', function(ev){
     if (!ev.data) return;
@@ -1023,13 +1095,27 @@ export function buildManualEditBridge(enabled: boolean): string {
       // safe: the session commits the current textContent on save and restores
       // its own originalText on cancel, so both paths still reconcile.
       var ptEl = findById(ev.data.id || '');
-      if (ptEl && ptEl !== document.body && ptEl.children.length === 0) {
+      var ptApplied = !!(ptEl && ptEl !== document.body && ptEl.children.length === 0);
+      if (ptApplied) {
         ptEl.textContent = String(ev.data.value == null ? '' : ev.data.value);
       }
+      answerPreviewApply(ev, ev.data.id, ptApplied);
+      return;
+    }
+    if (ev.data.type === 'od-edit-preview-link') {
+      answerPreviewApply(ev, ev.data.id, applyPreviewLink(ev.data.id || '', ev.data.text, ev.data.href));
+      return;
+    }
+    if (ev.data.type === 'od-edit-preview-image') {
+      answerPreviewApply(ev, ev.data.id, applyPreviewImage(ev.data.id || '', ev.data.src, ev.data.alt));
+      return;
+    }
+    if (ev.data.type === 'od-edit-preview-remove') {
+      answerPreviewApply(ev, ev.data.id, applyPreviewRemove(ev.data.id || ''));
       return;
     }
     if (ev.data.type === 'od-edit-preview-outer-html') {
-      applyPreviewOuterHtml(ev.data.id || '', ev.data.html);
+      answerPreviewApply(ev, ev.data.id, applyPreviewOuterHtml(ev.data.id || '', ev.data.html));
       return;
     }
     if (ev.data.type === 'od-edit-text-finish') {

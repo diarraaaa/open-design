@@ -26,6 +26,7 @@ import {
   installFileViewerPreviewRuntimeHarness,
   prepareSettledFileViewerFixture,
   setSyntheticPreviewFileSource,
+  spyOnManualEditMirrors,
   syntheticPreviewFileSource,
   uninstallFileViewerPreviewRuntimeHarness,
   useSyntheticProjectScopedPreviewNavigation,
@@ -351,7 +352,7 @@ describe('FileViewer manual edit history regressions', () => {
     });
     const frame = getActivePreviewFrame();
     const transportBeforeSave = frame.src;
-    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const postMessage = spyOnManualEditMirrors(frame);
     act(() => {
       panelState.props?.onApplyPatch(
         { id: 'hero', kind: 'set-text', value: 'Updated hero' },
@@ -362,11 +363,11 @@ describe('FileViewer manual edit history regressions', () => {
     await waitFor(() => expect(savedSources).toHaveLength(1));
     await waitFor(() => expect(panelState.props?.draft.fullSource).toContain('Updated hero'));
     await waitFor(() => {
-      expect(postMessage).toHaveBeenCalledWith({
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
         type: 'od-edit-preview-text',
         id: 'hero',
         value: 'Updated hero',
-      }, '*');
+      }), '*');
     });
     expect(getActivePreviewFrame()).toBe(frame);
     expect(frame.src).toBe(transportBeforeSave);
