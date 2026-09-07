@@ -270,6 +270,54 @@
      positional affordance for the log. */
   scrollbar-width: none;
 }
+
+/* 【不变量】**流水的每一行都按自己的自然高度画,超出就滚 —— 一行都不许被压扁。**
+ *
+ * `.chat-log` 是一根**定高的列向 flex 滚动容器**。flex 的默认收缩系数是 1,所以
+ * 内容超出容器时,浏览器的第一反应不是「溢出去让它滚」,而是**先把子项压扁**,
+ * 压到装得下为止;装不下才溢出。绝大多数行侥幸躲过了这一刀:它们的 `overflow`
+ * 是 `visible`,于是 `min-height: auto` 解析成**内容撑出来的最小高度**(flexbox
+ * §4.5「自动最小尺寸」),一压就顶住,浏览器只好放它溢出。
+ *
+ * 但只要一个直接子元素**自己裁掉溢出**(`overflow: hidden` —— 圆角卡为了切住
+ * 自己的辉光 / 描边几乎一定要写它),同一条规则就反过来:非 `visible` 的溢出让
+ * 自动最小尺寸变成 **0**,这一项成了整根流水上唯一压得动的那个,于是它把**全部**
+ * 负空间一个人吃下,收到只剩自己的内距,再被自己的 `overflow: hidden` 把下半截
+ * 裁掉。屏幕上看着像「这张卡渲染坏了」,其实是流水在拿它当泄压阀。
+ *
+ * 2026-09-07 的余额卡就是这么半截的(QA 截图)。真实浏览器量到的一档
+ * (面板 380×420、四条真消息 + 升级卡,已滚到最底):
+ *
+ *     自然高度 111.5   实际画出来 32(= 16+16 的内距,内容盒被收到 0)  裁掉 79.5
+ *     卡底距流水下沿 −19.91 —— **20px 的底部让位一分不少地在那儿**,
+ *     滚动也确实到了头(scrollTop 498 / maxScrollTop 498)。
+ *
+ * 所以这不是底部让位不够,也不是滚不到底:让位和滚动都是好的,是这一行本身
+ * 被画矮了。加上这条之后同一页量到 111.5 / 裁掉 0,`scrollHeight` 918 → 998,
+ * 正好把被吃掉的那 80px 还了回来。
+ *
+ * ── 为什么这条归容器,不归那张卡 ──────────────────────────────────────
+ * 「会被压扁」不是余额卡的毛病,是**任何在这根流水里裁自己溢出的东西**都会中的
+ * 招 —— 而圆角卡本来就该裁。把 `flex: none` 补在余额卡身上只能救这一张,下一个
+ * 写 `overflow: hidden` 的卡还会再中一次,而且照样长得像那张卡自己的渲染 bug。
+ * 判据属于滚动容器:**这里是一摞按自然高度排的行,压扁任何一行都不对**。
+ * 同一个道理下,`.chat-log-tail-spacer` 和 `.chat-virtual-spacer` 早就各自写了
+ * `flex: 0 0 auto` —— 这条只是把它们各自打的补丁提成整根流水的契约。
+ *
+ * ── 这条**不动**底部让位 ──────────────────────────────────────────────
+ * 底部空间仍旧只由「浮在流水上方的东西」决定:药丸(`.has-plan-pill-reserve`
+ * 的 52px)和它下面那个 Jump 共用同一个绝对定位的浮层位。余额卡是**流水里的
+ * 一行**(T51),随内容滚,不浮在任何东西上面 —— 它一寸让位都不需要,也绝不能
+ * 记进那 52px 的账里:那样有药丸没卡、有卡没药丸的场面都会多出一块死空白。
+ * 判据:`tests/components/chat/w95-plan-pill-bottom-reserve.test.tsx`(52 的账)
+ * 与 `tests/components/chat/w96-chat-log-rows-never-shrink.test.tsx`(这一条)。
+ *
+ * `> *` 对 `overflow: visible` 的行是**空操作**(它们本来就压不动),对绝对定位
+ * 的子元素(虚拟化的 `.chat-virtual-row`、`position: fixed` 的取词浮条)更是
+ * 无从谈起 —— 它们压根不是 flex 项。 */
+.chat-log > * {
+  flex-shrink: 0;
+}
 /* The Step pill is an overlay, but the final transcript line still needs a
    real scroll destination above it. Reserve only while the pill exists so
    virtualized and regular transcripts share the same bottom safety area.

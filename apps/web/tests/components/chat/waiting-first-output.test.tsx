@@ -1,12 +1,30 @@
 // @vitest-environment jsdom
 /**
- * 等首个 token 的那一分钟里,壳里必须有一行说清**在等什么**。
+ * 等首个 token 的那一分钟里,壳里那一行说的是**「思考中」**。
+ *
+ * ── 文案撤回(产品裁决 2026-09-07,只撤文案,不撤探测)──────────────────
+ *
+ * 这一行曾经在等首个输出时把词换成「等待首批输出中」。产品看着实物撤了它,原话:
+ * 「为啥我看到思考中还有个文案是:「等待首批输出中」,这个文案让 subagent 撤掉,
+ * **依旧显示「思考中」**」。
+ *
+ * 这是**同一份稿子第 3 条原则**(`error-ux-design.md:21`「等待要有回音」)在这块屏幕上
+ * 第二次被撤回:第一次是 S12「上游响应慢,已等 N 秒」(2026-08-27,壳头,判据在
+ * `s12-copy-revert.test.tsx`)。两次撤的都只是**取值那一行**,探测一行没删。
+ *
+ * ⚠️ 所以这条测试分两半,**两半都必须在**:
+ *
+ *  · **撤回**:等到天荒地老,那一行也只读「思考中」,再也不说「等待首批输出中」。
+ *  · **保留**:门槛(`WAITING_FIRST_OUTPUT_AFTER_MS`)和 `waitingForFirstOutput` 照旧算 ——
+ *    ACP 那一轮壳里**一个事件都没有**、模型也没在想,那一行「思考中」**只可能**由它
+ *    补出来(`groupThinking` 的 `live` 入参)。谁把这个判据「顺手清干净」,下面第一条
+ *    和最后一条会当场红:屏幕会退回 2026-09-03 之前那个**全空**的样子。
  *
  * ── 真机报告(打包版 beta,2026-09-03)─────────────────────────────────
  *
  * 用户第一轮盯着执行记录看了一分多钟,原话「运行 claude 为啥思考中是空的, 空了半分钟了」
  * 「一分多钟了」。第二轮正常。**空本身没有错** —— 模型确实一个 token 都还没吐出来;
- * 错的是这一分钟里屏幕对此说了什么。
+ * 错的是这一分钟里屏幕**整个是空的**。补的是那一行的**存在**,不是它的措辞。
  *
  * ── 这条测试守的是哪一半(另一半已经有人管了)────────────────────────
  *
@@ -15,22 +33,25 @@
  * `first-thoughts-no-elapsed.test.tsx`)。所以下面每一条都**顺带钉住这一行不带数字** ——
  * 把秒表补到这里就是那条裁决的复读。
  *
- * 「在等什么」才是真的没人说。分两种 agent 看:
+ * **那一行在不在**才是这条测试的正题。分两种 agent 看:
  *
  *  · **claude**(`claude-stream-json`):每 1.4 秒一帧空 `thinking_delta`,壳里那行
- *    「思考中」照常亮(W102),它**已经**回答了「在等什么」—— 这一条不动它。
+ *    「思考中」照常亮(W102)—— 这一条不动它,它本来就在。
  *  · **ACP 那一家**(`vela` / `devin` / `hermes` / `kilo` / `kimi` / `kiro` / `vibe`):
- *    首个 token 之前一条会落行的事件都没有,壳身子是**全空的**。而 daemon 这一刻正
- *    逐字发着 `{"type":"status","label":"waiting_for_first_output","elapsedMs":27217}`
- *    (`apps/daemon/src/agent-protocol/acp/session.ts:849`)—— 它知道在等什么,屏幕不说。
+ *    首个 token 之前一条会落行的事件都没有,壳身子是**全空的**,那一行「思考中」
+ *    只能靠 `waitingForFirstOutput` 补出来。daemon 这一刻正逐字发着
+ *    `{"type":"status","label":"waiting_for_first_output","elapsedMs":27217}`
+ *    (`apps/daemon/src/agent-protocol/acp/session.ts:849`),但**屏幕不转述它** ——
+ *    见下面「不读 daemon 那个 label」。
  *
  * ── 依据 ─────────────────────────────────────────────────────────────
  *
- *  · `docs/design/run-errors/error-ux-design.md:21`:「超过 60 秒没动静,**转圈旁边**要说
- *    『在等什么、等了多久』;**不到超时不报错**」。所以这是一行**状态**,不许长得像报错,
- *    也不许在门槛之内出现(同一份稿子第 44 行把失败门槛定在 10 分钟静默)。
- *  · `docs/design/run-errors/implementation-audit.md` 已经把它记成 S12 的缺口:
- *    「`assistant.waitingFirstOutput` / `assistant.slowHint` 是死键…零代码读取」。
+ *  · **产品裁决 2026-09-07**(原话在顶上):这一行只说「思考中」。稿子
+ *    `docs/design/run-errors/error-ux-design.md:21` 那句「转圈旁边要说『在等什么、
+ *    等了多久』」在这块屏幕上**已被产品撤回两次**(S12 一次、这次一次);谁想再把
+ *    「在等什么」写回这一行,先去拿产品的话,别照着稿子直接改。
+ *  · `assistant.waitingFirstOutput` 因此**退回死键**,19 个 locale 里的值都留着不删
+ *    (`tests/i18n/locales.test.ts` 仍钉着它的质量),等产品换一种展现形式时接回来。
  *  · 落在**壳里那一行**而不是壳头:壳头上一次挂这种句子被产品当场撤回
  *    (2026-08-27「上游响应慢，已等 411 秒  13m 7s」,原文在 `ExecutionShell.tsx` 的
  *    `head` 注释里),两条撤回理由是「读起来像故障」和「右边的总耗时在说同一段时间」。
@@ -128,7 +149,7 @@ function waitingRowElapsed(): string | null {
   return row.querySelector('[data-testid="chat-foldable-elapsed"]')?.textContent ?? null;
 }
 
-describe('等首个 token:壳里那一行要说在等什么', () => {
+describe('等首个 token:壳里那一行读「思考中」(文案撤回,判据保留)', () => {
   let live: ReturnType<typeof makeLiveStream>;
   let abort: AbortController;
   let frameId = 2000;
@@ -206,17 +227,24 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
     events,
   } as ChatMessage);
 
-  it('ACP 那一轮:daemon 说了 `waiting_for_first_output`,屏幕上一个字都没有', async () => {
+  it('ACP 那一轮等了一分多钟:那一行在,而且读的是「思考中」', async () => {
     await frame({ ...WAITING_FOR_FIRST_OUTPUT });
     expect(captured.length, '传输层把这一帧整个丢了 —— 后面的断言就无从谈起').toBeGreaterThan(0);
 
     show(<AssistantMessage message={turnOf('m-acp', captured)} streaming projectId="p1" />);
     await idle(67_000);
 
-    expect(screen.getByText('等待首批输出中'), '在等什么 —— 壳身子整个是空的').toBeTruthy();
+    /*
+     * **保留那一半**:壳里一个事件都没有、模型也没在想,这一行「思考中」只可能由
+     * `waitingForFirstOutput` 经 `groupThinking` 补出来。删掉那个判据 = 这条当场红,
+     * 屏幕退回 2026-09-03 之前的全空。
+     */
+    expect(screen.getByText('思考中'), '壳身子整个是空的 —— 那一行被清掉了').toBeTruthy();
+    /* **撤回那一半**(产品 2026-09-07) */
+    expect(screen.queryByText('等待首批输出中'), '产品撤掉的文案被换个名字请回来了').toBeNull();
   });
 
-  it('⚠️ 但它不许再写一个秒数 —— 壳头那个就是同一个数(产品 2026-09-04)', async () => {
+  it('⚠️ 但那一行不许再写一个秒数 —— 壳头那个就是同一个数(产品 2026-09-04)', async () => {
     await frame({ ...WAITING_FOR_FIRST_OUTPUT });
     show(<AssistantMessage message={turnOf('m-acp-noms', captured)} streaming projectId="p1" />);
     await idle(67_000);
@@ -227,12 +255,14 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
     expect(waitingRowElapsed(), '把秒表补到这一行 = 2026-09-04 那条裁决的复读').toBeNull();
   });
 
-  it('门槛之内一个字都不多说 —— 快的那些轮次不许被打扰', async () => {
+  it('门槛之内一行都不多出 —— 快的那些轮次不许被打扰', async () => {
     await frame({ ...WAITING_FOR_FIRST_OUTPUT });
     show(<AssistantMessage message={turnOf('m-acp-fast', captured)} streaming projectId="p1" />);
     await idle(WAITING_FIRST_OUTPUT_AFTER_MS - 1_000);
 
-    expect(screen.queryByText('等待首批输出中'), '不到门槛就说话 = 每一轮都在念叨').toBeNull();
+    /* 门槛照旧管用 —— 这是「保留」那一半:判据没了的话这一行会提前冒出来 */
+    expect(screen.queryByText('思考中'), '不到门槛就补那一行 = 每一轮都在念叨').toBeNull();
+    expect(screen.queryByText('等待首批输出中'), '撤掉的文案不许在任何时刻出现').toBeNull();
   });
 
   it('第一个 token 一落地就干净地收走,不留一行陈的', async () => {
@@ -242,10 +272,12 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
     show(<AssistantMessage message={answered} streaming projectId="p1" />);
     await idle(67_000);
 
-    expect(screen.queryByText('等待首批输出中'), '答案都开始流了还挂着「在等」').toBeNull();
+    /* 壳里落了正文 → `items` 不再为空 → 判据翻回 false,那一行整个收走 */
+    expect(screen.queryByText('思考中'), '答案都开始流了还挂着那一行').toBeNull();
+    expect(screen.queryByText('等待首批输出中'), '撤掉的文案不许在任何时刻出现').toBeNull();
   });
 
-  it('claude 那一轮不受影响:「思考中」已经回答了在等什么,不许再叠一行', async () => {
+  it('claude 那一轮不受影响:那一行本来就在,不许再叠一行', async () => {
     /*
      * claude 走 `claude-stream-json`,**从不发** `waiting_for_first_output`
      * (全仓只有 ACP 那一处发)。它发的是空推理心跳,`ProjectView` 的 W102 规则据此
@@ -261,8 +293,9 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
     );
     await idle(0);
 
+    /* `getByText` 一次只许命中一个 —— 这一条同时钉住「不叠第二行」 */
     expect(screen.getByText('思考中'), '这一行本来就在,别把它测没了').toBeTruthy();
-    expect(screen.queryByText('等待首批输出中'), '两行说同一件事 = 同一句话说两遍').toBeNull();
+    expect(screen.queryByText('等待首批输出中'), '撤掉的文案不许在任何时刻出现').toBeNull();
     // 顺带:这一行照旧不带数(产品 2026-09-04),别顺手补回来
     expect(waitingRowElapsed()).toBeNull();
   });
@@ -283,7 +316,8 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
     show(<AssistantMessage message={withTool} streaming projectId="p1" />);
     await idle(300_000);
 
-    expect(screen.queryByText('等待首批输出中'), '越界接管了 S12').toBeNull();
+    expect(screen.queryByText('思考中'), '越界接管了 S12').toBeNull();
+    expect(screen.queryByText('等待首批输出中'), '撤掉的文案不许在任何时刻出现').toBeNull();
   });
 
   it('下一轮照样会说 —— 这不是「一个会话只提醒一次」', async () => {
@@ -297,7 +331,7 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
 
     const view = show(<AssistantMessage message={first} streaming projectId="p1" />);
     await idle(67_000);
-    expect(screen.queryByText('等待首批输出中'), '第一轮已经答完,不该挂着').toBeNull();
+    expect(screen.queryByText('思考中'), '第一轮已经答完,不该挂着').toBeNull();
 
     view.rerender(
       <I18nProvider initial="zh-CN">
@@ -305,6 +339,8 @@ describe('等首个 token:壳里那一行要说在等什么', () => {
       </I18nProvider>,
     );
     await idle(67_000);
-    expect(screen.getByText('等待首批输出中'), '第二轮又等了一分钟,照样得说').toBeTruthy();
+    /* 「保留」那一半的第二只钉子:判据是每轮各算各的,删了它这里也会红 */
+    expect(screen.getByText('思考中'), '第二轮又等了一分钟,那一行照样得在').toBeTruthy();
+    expect(screen.queryByText('等待首批输出中'), '撤掉的文案不许在任何时刻出现').toBeNull();
   });
 });

@@ -2829,15 +2829,38 @@ export function ProjectView({
     } | null
   >(null);
   /**
-   * 余额提示卡(交付稿第 75 / 76 格)要显示的余额,`null` = 不提示。
+   * 余额提示卡(交付稿第 75 / 76 格)要显示的那份读数,`null` = 不提示。
    *
    * 产品 2026-08-26 裁决:「**告警可继续的不弹窗,只有卡片;余额不足再弹窗**」。
    * 于是这里成了告警档**唯一**的呈现方式 —— 它不挡发送(D4),卡在流水里,
    * 和输入框无关。拦截档弹窗保留,但也会同时点亮这张卡。
    *
    * 判定本身没动(`runtime/amr-balance-gate.ts`),这只是判定结果的呈现。
+   *
+   * ## 为什么数字和锚点装在**同一个** state 里
+   *
+   * T61(产品 2026-09-07)把这张卡从「当前余额的实时读数」改成「**这一轮为什么
+   * 停下来的凭据**」,凭据必须有主 —— `anchorMessageId` 就是那个主。三个写入口
+   * 各自知道自己的主是谁:
+   *
+   *   · 告警档(`gate.kind === 'soft'`)  → 刚画出去的那一轮(`assistantId`)
+   *   · 跑到一半死在钱上                  → 那条失败的助手消息
+   *   · 拦截档(`gate.kind === 'hard'`)  → **`null`**:那一轮已经被
+   *     `retractPaintedTurn` 收回,没有 run 也就没有轮次可挂
+   *
+   * 两者拆成两条 state 就会有「成对写」这条只能靠人记住的约定,而漏写任何一半
+   * 都是静默的:漏了锚点,卡退回流水末尾、跟着新一轮往下跑(T61 ② 失效);
+   * 漏了数字,那一轮的卡永远画不出来。装成一个对象之后**没有半份可写**。
+   *
+   * ⚠️ 锚点只回答「挂在谁下面」。**什么时候出现由那一轮自己的收尾状态决定**,
+   * 判据在 `ChatPane.isFinishedTurn`,这里不重复一遍。
    */
-  const [amrBalanceCardUsd, setAmrBalanceCardUsd] = useState<number | null>(null);
+  const [amrBalanceCard, setAmrBalanceCard] = useState<{
+    balanceUsd: number;
+    anchorMessageId: string | null;
+  } | null>(null);
+  const amrBalanceCardUsd = amrBalanceCard?.balanceUsd ?? null;
+  const amrBalanceCardAnchorId = amrBalanceCard?.anchorMessageId ?? null;
   /**
    * 出这张卡时那份钱包读数的 profile。只在**没有工作区上下文**时用得到 ——
    * 那种情况下升级链接退回 profile 兜底(和 `AmrBalanceDialog` 同一条规则)。
@@ -2847,7 +2870,7 @@ export function ProjectView({
    * **跑到一半死在钱上的那一轮,也要点亮同一张卡。**
    *
    * 用户 2026-09-02 裁决:「额度不足和额度耗尽,升级卡各只有一张,不存在第二张
-   * 白色通用报错卡」。上面那两处 `setAmrBalanceCardUsd` 都在**发送前**的余额闸门
+   * 白色通用报错卡」。下面那两处 `setAmrBalanceCard` 都在**发送前**的余额闸门
    * 里 —— 闸门看不出问题、run 起来了、跑到一半才耗尽的那一格,在此之前只有
    * daemon 的 `AMR_INSUFFICIENT_BALANCE` → 通用白卡。白卡那一半已经由
    * `amr-guidance` 的 `suppressCard` 撤掉,这里补上另一半。
@@ -2856,10 +2879,18 @@ export function ProjectView({
    * 卡还在;而发送路径和重挂路径各有一个 `onError`,挂回调等于要在两处各写一遍,
    * 漏一处就是刷新后卡消失。
    */
-  const amrBalanceFailureMessageId = useMemo(
-    () => amrInsufficientBalanceFailureMessageId(messages),
+  const amrBalanceFailure = useMemo(
+    () => amrInsufficientBalanceFailure(messages),
     [messages],
   );
+  const amrBalanceFailureMessageId = amrBalanceFailure?.messageId ?? null;
+  /**
+   * 那一轮停下来时的余额,**已经记在那条失败事件上**的那一份(T61 ④)。
+   *
+   * 有它就不再问钱包 —— 卡上的数字是「那一轮为什么停」的凭据,不是今天的读数。
+   * 没有它(这一轮刚死、或者是这个字段存在之前落的库)才现查一次,查完写回去。
+   */
+  const amrBalanceFailureArchivedUsd = amrBalanceFailure?.archivedBalanceUsd ?? null;
   /**
    * **补查落空了没有。** 落空 = 报错卡那一半没人接得住,得还回去。
    *
@@ -2921,7 +2952,8 @@ export function ProjectView({
         setAmrBalanceFailureWalletUnavailable(true);
         return;
       }
-      setAmrBalanceCardUsd(balanceUsd);
+      // 这份读数是替**那条失败的助手消息**取的,卡就挂在它下面(T61)。
+      setAmrBalanceCard({ balanceUsd, anchorMessageId: amrBalanceFailureMessageId });
       setAmrBalanceCardProfile(snapshot?.profile ?? null);
     })();
     return () => {
@@ -8253,7 +8285,12 @@ export function ProjectView({
             // 只对「余额耗尽」出卡。被登出也走这条硬拦截,但那张卡说的是钱的事,
             // 摆一个 $0.00 去解释一次登录过期是在误导 —— 那一档交给弹窗。
             if (gate.reason === 'insufficient') {
-              setAmrBalanceCardUsd(amrBalanceCardBalanceUsd(gate.snapshot));
+              // **没有轮次可锚。** 这一档下面紧跟着 `parkBlockedSend()`,而它会
+              // `retractPaintedTurn()` 把刚画出去的那一轮收回 —— 没有 run,也就
+              // 没有「那一轮」可挂。锚点给 `null`,读数照旧落在流水末尾(T61)。
+              setAmrBalanceCard(
+                amrBalanceCardCue(amrBalanceCardBalanceUsd(gate.snapshot), null),
+              );
               setAmrBalanceCardProfile(gate.snapshot.profile ?? null);
             }
             return acceptedDurableQueue(parkBlockedSend());
@@ -8275,12 +8312,28 @@ export function ProjectView({
              * 东西 —— 这一段现在是同步的,原本跨 await 的会话切换复查也不需要了
              * (进这个分支之前已经复查过一次)。
              */
-            setAmrBalanceCardUsd(amrBalanceCardBalanceUsd(gate.snapshot));
+            /*
+             * 锚在**这一次要跑的那一轮**上(T61 ①②)。这份读数是它开跑前的余额,
+             * 卡要等它跑完才出现、出现之后就钉在它下面 —— 运行中不出现由
+             * `ChatPane.isFinishedTurn` 判,这里只负责说清「这钱是哪一轮的」。
+             *
+             * 给的是 `assistantId` 而不是「当前最后一条助手消息」:那一轮此刻已经
+             * 画出去了但还没跑完,拿「最后一条」去猜会在重试路径上指错人。
+             */
+            setAmrBalanceCard(
+              amrBalanceCardCue(amrBalanceCardBalanceUsd(gate.snapshot), assistantId),
+            );
             setAmrBalanceCardProfile(gate.snapshot.profile ?? null);
           }
-          // 判定放行:撤掉那张卡 —— 余额已经不是问题了,提示不该留在屏幕上。
+          /*
+           * 判定放行:撤掉读数 —— 余额已经不是问题了,**新的**轮次不该再出卡。
+           *
+           * ⚠️ 撤的只是读数,不是已经存档的那几张卡。T61 ④:卡是「那一轮为什么
+           * 停下来」的凭据,历史不因为后来充了钱就被抹掉(产品原话「不能说我干个啥
+           * 把当时的失败态搞丢了」)。存档账本在 `ChatPane`,只增不删。
+           */
           if (gate.kind === 'allow') {
-            setAmrBalanceCardUsd(null);
+            setAmrBalanceCard(null);
             setAmrBalanceCardProfile(null);
           }
           amrGatePausedQueueConversationsRef.current.delete(gateConversationId);
@@ -13086,6 +13139,7 @@ export function ProjectView({
               config={config}
               onOpenSettings={onOpenSettings}
               amrBalanceCardUsd={amrBalanceCardUsd}
+              amrBalanceCardAnchorMessageId={amrBalanceCardAnchorId}
               amrBalanceCardUnavailable={amrBalanceFailureWalletUnavailable}
               onAmrBalanceUpgrade={handleAmrBalanceCardUpgrade}
               showByokRecoveryAction={
@@ -14495,6 +14549,21 @@ export function amrBalanceCardBalanceUsd(
 }
 
 /**
+ * 一份「要出升级卡」的读数,连同它属于哪一轮 —— 读不出数字就是**没有读数**。
+ *
+ * 数字和锚点在一个对象里,是为了让「只写了一半」在语法上不成立(T61)。读数缺席
+ * 时连对象都不建:一个 `{ balanceUsd: null }` 会诱使后来人给它补一条「没有数字
+ * 但有锚点」的分支,而那一格该说话的是白色报错卡,不是这张。
+ */
+export function amrBalanceCardCue(
+  balanceUsd: number | null,
+  anchorMessageId: string | null,
+): { balanceUsd: number; anchorMessageId: string | null } | null {
+  if (balanceUsd == null) return null;
+  return { balanceUsd, anchorMessageId };
+}
+
+/**
  * daemon 在 run 里判定的「余额不足」错误码。写在这里而不是从 `amr-guidance`
  * 里借:那个模块导出的是**卡面映射**,不是错误码本身,而这一条要回答的是
  * 「这一轮是不是死在钱上」。
@@ -14502,25 +14571,31 @@ export function amrBalanceCardBalanceUsd(
 const AMR_INSUFFICIENT_BALANCE_CODE = 'AMR_INSUFFICIENT_BALANCE';
 
 /**
- * **最后一轮是不是跑到一半死在余额上** —— 是就返回那条助手消息的 id,不是就 `null`。
+ * **最后一轮是不是跑到一半死在余额上** —— 是就返回那一轮,不是就 `null`。
  *
  * 这是升级卡在「跑到一半」那条路上的唯一触发点(用户 2026-09-02 裁决:钱的事
  * 只有升级卡一张,没有第二张白色通用报错卡)。发送前那道闸门是另一个触发点,
- * 两者写的是同一个 `amrBalanceCardUsd`。
+ * 两者写的是同一个 `amrBalanceCard`。
+ *
+ * **id 和存档读数一起返回,不分两次走。** 两者读的是**同一条失败事件**,分两个
+ * 函数各走一遍这条链就给「id 取自这一条、数字取自那一条」留了缝 —— 和
+ * `amrBalanceCardCue` 把数字和锚点装进同一个对象是同一条理由。
  *
  * 三条刻意的窄化:
  *
- * - **只看最后一条助手消息。** 卡说的是「你现在的额度」,不是「历史上某一轮
- *   曾经缺过钱」。上一轮缺钱、这一轮跑通了,卡就该下去。
+ * - **只看最后一条助手消息。** 它回答的是「**现在**要不要替某一轮把余额说出来」,
+ *   不是「屏幕上该留几张卡」。上一轮缺钱、这一轮跑通了,就不再管了。
+ *   ⚠️ 这不再等于「旧卡下去」—— T61 之后已经出过的卡由 `ChatPane` 按轮次存档,
+ *   只增不删(产品 2026-09-07:卡是「那一轮为什么停」的凭据,是历史记录)。
  * - **只认结构化错误码**,不去猜原文。错误码由 daemon 的
  *   `classifyAmrAccountFailure` 判定,那是唯一的判据来源;web 再猜一遍就是
  *   两处各说各话。这条码本身只对 AMR 发出,所以不另加 agent 判据 ——
  *   多一道会在 agentId 没落盘的历史消息上把卡吃掉。
  * - **只认终态失败。** 还在跑的一轮不谈余额。
  */
-export function amrInsufficientBalanceFailureMessageId(
+export function amrInsufficientBalanceFailure(
   messages: ChatMessage[],
-): string | null {
+): { messageId: string; archivedBalanceUsd: number | null } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (!message || message.role !== 'assistant') continue;
@@ -14529,11 +14604,55 @@ export function amrInsufficientBalanceFailureMessageId(
     for (let j = events.length - 1; j >= 0; j--) {
       const event = events[j];
       if (event?.kind !== 'status' || event.label !== 'error') continue;
-      return event.code === AMR_INSUFFICIENT_BALANCE_CODE ? message.id : null;
+      if (event.code !== AMR_INSUFFICIENT_BALANCE_CODE) return null;
+      return {
+        messageId: message.id,
+        archivedBalanceUsd:
+          typeof event.amrBalanceUsd === 'number' && Number.isFinite(event.amrBalanceUsd)
+            ? event.amrBalanceUsd
+            : null,
+      };
     }
     return null;
   }
   return null;
+}
+
+/**
+ * 把「这一轮停下来时的余额」写进那条失败事件 —— **存档的唯一写入口**(T61 ④)。
+ *
+ * 失败事件本身不带余额(daemon 的 `classifyAmrAccountFailure` 只给出错误码),
+ * 所以第一次得现查一次;写下来是为了**从此不必再查**。不写的话每次重开都重新
+ * 报价,那一轮的卡就会念今天的数字去解释几天前的失败 —— 充完值之后写着
+ * 「剩余额度 $20.00」,比卡直接消失更误导。
+ *
+ * 三条不变量,都是这次写回**能不能活下来**的前提:
+ *
+ * - **就地改那一条,不追加、不删。** 事件数组长度一个不变。daemon 的
+ *   `mergeMessageWriteForDaemonBacked`(`routes/project/conversations.ts:543`)
+ *   按**长度**判「这次写是不是在缩短事件」,短了就整份退回 stored。
+ * - **只碰 `events`,不碰 `runStatus` / `endedAt`。** 同一处守卫按终态判回退
+ *   (`:549`),状态动一下这次写就白写。
+ * - **写过就不再写。** 已经有数字的那一条原样返回,连新对象都不建:
+ *   调用方靠「返回的是不是同一个引用」判要不要落库,重复写只会把同一份读数
+ *   反复 PUT 回去。
+ */
+export function stampAmrBalanceUsdOnFailure(
+  message: ChatMessage,
+  balanceUsd: number,
+): ChatMessage {
+  if (!Number.isFinite(balanceUsd)) return message;
+  const events = message.events ?? [];
+  for (let j = events.length - 1; j >= 0; j--) {
+    const event = events[j];
+    if (event?.kind !== 'status' || event.label !== 'error') continue;
+    if (event.code !== AMR_INSUFFICIENT_BALANCE_CODE) return message;
+    if (typeof event.amrBalanceUsd === 'number') return message;
+    const nextEvents = events.slice();
+    nextEvents[j] = { ...event, amrBalanceUsd: balanceUsd };
+    return { ...message, events: nextEvents };
+  }
+  return message;
 }
 
 export function finalizeActiveAssistantMessagesOnStop(

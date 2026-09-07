@@ -267,8 +267,26 @@ export function ExecutionShell({
    * 而 daemon 这一刻正逐字发着
    * `{"type":"status","label":"waiting_for_first_output","elapsedMs":27217}`
    * (`apps/daemon/src/agent-protocol/acp/session.ts:849`)—— 它知道在等什么,屏幕不说。
-   * 稿子 `docs/design/run-errors/error-ux-design.md:21` 要的就是这一句:
+   * 稿子 `docs/design/run-errors/error-ux-design.md:21` 当初要的是这一句:
    * 「超过 60 秒没动静,**转圈旁边**要说『在等什么、等了多久』;**不到超时不报错**」。
+   *
+   * ⚠️ 补进去的最终**只有那一行的存在**,不是它的措辞 —— 稿子那句「在等什么」后来被
+   * 产品撤了(见下一节)。所以这一档现在解决的是「屏幕全空」,不是「屏幕不说在等什么」。
+   *
+   * ── ⚠️ 文案撤回,判据保留(产品裁决 2026-09-07)────────────────────────
+   *
+   * 这一档曾经把那一格的词换成「等待首批输出中」。产品撤了它,原话:「为啥我看到思考中
+   * 还有个文案是:「等待首批输出中」,这个文案让 subagent 撤掉,**依旧显示「思考中」**」。
+   * 撤的**只有那一行取值**(在 `ThoughtsRow` 的 `summary` 里,原文钉在那儿)。
+   *
+   * **这个判据本身不是死代码。** 它是下面 `groupThinking` 的 `live` 入参的一半 ——
+   * ACP 那一轮壳里一个事件都没有、`thinkingNow` 也是 false,那一格「思考中」**只可能**
+   * 由它补出来。删掉它,屏幕就退回 2026-09-03 用户报的那个**全空**画面,而不是
+   * 「少了一句话」。钉子在 `tests/components/chat/waiting-first-output.test.tsx`:
+   * 第一条和最后一条会当场红。
+   *
+   * (同一份稿子的第 3 条原则在这块屏幕上已被产品撤回两次 —— S12 一次、这次一次。
+   *  想把「在等什么」写回来的下一位:先拿产品的话,别照着稿子直接改。)
    *
    * ── 三条边界 ─────────────────────────────────────────────────────────
    *
@@ -334,8 +352,6 @@ export function ExecutionShell({
             liveTextIndex: liveTextIndexOf(items, running),
             firstThoughtsStack,
             mutedThoughtsIndex: mutedThoughtsIndexOf(items, shell.items, firstThoughtsStack),
-            /* 模型没在想、壳里也还什么都没有 —— 那一格的词换成「等待首批输出中」 */
-            waitingForFirstOutput: waitingForFirstOutput && !thinkingNow,
           }))
         : null}
     </Foldable>
@@ -439,12 +455,6 @@ interface RenderCtx {
   firstThoughtsStack: ShellItem[] | null;
   /** **这一摞**里被压住时长的那一格排第几;`-1` = 不在这一摞 */
   mutedThoughtsIndex: number;
-  /**
-   * 这一轮还卡在首个输出之前,而且模型也没在想 —— 那一格空思考的词换成
-   * 「等待首批输出中」。判据与三条边界在组件里 `waitingForFirstOutput` 那段。
-   * 只可能为真于**壳顶层**(抽屉里有 todo 就意味着壳里已经落过东西)。
-   */
-  waitingForFirstOutput: boolean;
 }
 
 function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): ReactElement | null {
@@ -463,11 +473,6 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
         /* 整轮头一格:数照旧算得出,只是**在它想完之前**不写出来
            (理由在 `stackOwningFirstThoughts`,到期判据在 `ThoughtsRow` 的 `elapsed`) */
         muted={index === ctx.mutedThoughtsIndex}
-        /*
-         * 一段推理都没落下来的那一格才可能是「在等首批输出」——
-         * 有正文就说明模型已经在想了,那时候「思考中」才是实话。
-         */
-        waiting={ctx.waitingForFirstOutput && item.live === true && item.texts.length === 0}
         live={item.live === true}
         t={ctx.t}
         deferBody={ctx.deferCollapsedBodies}
@@ -565,7 +570,7 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
  *
  * ⚠️ 这个 span **不许挂 `aria-live`** —— 挂了读屏会每秒念一遍秒数。
  */
-function ThoughtsRow({ texts, elapsedMs, tokens, muted, waiting, live, t, deferBody }: {
+function ThoughtsRow({ texts, elapsedMs, tokens, muted, live, t, deferBody }: {
   texts: string[];
   elapsedMs: number | null;
   /** 还在想的那一格想了多少;别的档一律 `null`(见 `ThinkingTokens`) */
@@ -577,11 +582,6 @@ function ThoughtsRow({ texts, elapsedMs, tokens, muted, waiting, live, t, deferB
    * 判据与完整理由在 `stackOwningFirstThoughts`。
    */
   muted: boolean;
-  /**
-   * 这一格不是「模型在想」,是「这一轮还没等到第一个输出」—— 只换那一行字,
-   * 球、扫光、三个点、右边不写数,一件不动。判据在组件里 `waitingForFirstOutput` 那段。
-   */
-  waiting: boolean;
   live: boolean;
   t: RenderCtx['t'];
   deferBody: boolean;
@@ -737,12 +737,21 @@ function ThoughtsRow({ texts, elapsedMs, tokens, muted, waiting, live, t, deferB
         <span className={styles.icon}><Orb state="composing" box={20} className={styles.orb} /></span>
         <span className={styles.shimmer}>
           {/*
-            * 「等待首批输出中」是**已有的文案**,19 个 locale 都在
-            * (`i18n/types.ts` 的 `assistant.waitingFirstOutput`),只是一直没人读 ——
-            * `docs/design/run-errors/implementation-audit.md` 把它记成死键。
-            * 这里是它第一个读者,不新造一句产品文案。
+            * **一档词,没有第二档**(产品裁决 2026-09-07)。
+            *
+            * 这里曾经在等首个输出时换成 `assistant.waitingFirstOutput`「等待首批输出中」。
+            * 产品看着实物撤了,原话:「为啥我看到思考中还有个文案是:「等待首批输出中」,
+            * 这个文案让 subagent 撤掉,**依旧显示「思考中」**」。
+            *
+            * ⚠️ 撤的**只有这一行取值**。那一行本身照旧由 `waitingForFirstOutput` 补出来
+            * (见组件里那段注释),不然 ACP 那一轮的头一分钟屏幕上一个字都没有 ——
+            * 那正是 2026-09-03 用户报的画面。判据在
+            * `tests/components/chat/waiting-first-output.test.tsx` 的两半。
+            *
+            * `assistant.waitingFirstOutput` 因此退回死键,19 个 locale 的值**留着不删**:
+            * 产品说的是撤掉这个展现,不是这件事不再发生,换一种形式时接回来就行。
             */}
-          {t(waiting ? 'assistant.waitingFirstOutput' : 'chat.record.thinking')}
+          {t('chat.record.thinking')}
           <span className={styles.dots} aria-hidden><i /><i /><i /></span>
         </span>
       </>

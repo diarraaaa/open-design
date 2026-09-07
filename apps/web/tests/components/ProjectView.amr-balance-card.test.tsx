@@ -283,6 +283,7 @@ vi.mock('../../src/components/ChatPane', () => ({
     sendDisabled?: boolean;
     queuedItems?: Array<{ prompt: string }>;
     amrBalanceCardUsd?: number | null;
+    amrBalanceCardAnchorMessageId?: string | null;
     onSend?: (
       prompt: string,
       attachments: [],
@@ -295,6 +296,14 @@ vi.mock('../../src/components/ChatPane', () => ({
         <div data-testid="active-conversation">{props.activeConversationId ?? ''}</div>
         <div data-testid="amr-balance-card-prop">
           {props.amrBalanceCardUsd == null ? 'none' : String(props.amrBalanceCardUsd)}
+        </div>
+        {/* T61:读数是替哪一轮取的。`none` = 没有轮次可锚,落在流水末尾。 */}
+        <div data-testid="amr-balance-anchor-prop">
+          {props.amrBalanceCardAnchorMessageId ?? 'none'}
+        </div>
+        {/* 这一轮的助手消息 id —— 断言锚点指的就是它,而不是随便一条。 */}
+        <div data-testid="last-assistant-id">
+          {[...(props.messages ?? [])].reverse().find((m) => m.role === 'assistant')?.id ?? ''}
         </div>
         <button
           type="button"
@@ -521,4 +530,43 @@ describe('余额判定的呈现:告警只出卡,拦截才弹窗', () => {
     expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
     expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('none');
   });
+
+  /*
+   * 红测(T61 · 接线那一半):**这份读数是替哪一轮取的。**
+   *
+   * `ChatPane` 那一页(`tests/components/chat/t61-balance-card-turn-archive.test.tsx`)
+   * 断言的是「有主的读数怎么画」。这一页断言的是它的上游:`ProjectView` 要把
+   * **主是谁**一起交出去,否则卡就退回流水末尾,T61 ②「不随新一轮移动」失效。
+   */
+  it('告警档:读数锚在这一次要跑的那一轮上', async () => {
+    await sendOnce({ kind: 'soft', snapshot: snapshot('1.2') });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('1.2'),
+    );
+    const anchor = screen.getByTestId('amr-balance-anchor-prop').textContent;
+    expect(anchor).not.toBe('none');
+    // 指的就是这一轮那条助手消息,不是别的哪一条。
+    expect(anchor).toBe(screen.getByTestId('last-assistant-id').textContent);
+  });
+
+  it('拦截档:没有轮次可锚 —— 那一轮已经被收回了', async () => {
+    await sendOnce({
+      kind: 'hard',
+      reason: 'insufficient',
+      snapshot: snapshot('0'),
+    });
+
+    await waitFor(() => expect(screen.getByTestId('amr-balance-dialog')).toBeTruthy());
+    expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0');
+    // 收回之后流水里根本没有这一轮 —— 锚点必须是空的,读数才落得回流水末尾。
+    expect(screen.getByTestId('amr-balance-anchor-prop').textContent).toBe('none');
+  });
+
+  /*
+   * 「放行时锚点也一起撤掉」**故意没有单独的用例**:读数和锚点装在同一条 state
+   * 里(`ProjectView.amrBalanceCard`),放行那一档只有一句 `setAmrBalanceCard(null)`,
+   * 没有「只撤一半」这种写法可写。写一条只能写成永远绿的断言,那不是证据。
+   * 上面「放行时既不弹窗也不出卡」已经覆盖放行那一档的可见行为。
+   */
 });

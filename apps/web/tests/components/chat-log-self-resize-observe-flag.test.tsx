@@ -31,8 +31,19 @@ import type { ChatMessage } from '../../src/types';
  * 所以下面还有一条**行为**用例:只改可视高度、不改内容高度,再只发滚动盒自己那份
  * resize 通知。真实浏览器里这种变化(输入框长高、软键盘弹出、窗口变矮)只会 resize
  * 滚动盒,不会 resize 任何子元素 —— 所以「名单里没有滚动盒」就等于「这一类变化
- * 一个回调都收不到」。`is-scrollable` 这个类是它唯一的出口:`syncScrollable` 只在
- * effect 挂载时和 scroll 事件里跑,纯可视高度变化两条都不会发生。
+ * 一个回调都收不到」。
+ *
+ * 读数取的是**跟随的落点**(`.chat-log` 的 `scrollTop`):正在跟随最新输出的对话,
+ * 可视区被挤矮之后应该重新贴到底。这正是这条自观察存在的第一条理由,也是
+ * `runtime/chat-scroll-experiments.ts` 里列的第一条代价 ——
+ * 「输入框长高把可视区挤矮,正在跟随的对话不会重新贴底,最新那条被压在下面」。
+ * 用户看得见的就是这一格位移;不经过任何类名、任何 state,是那条 ResizeObserver
+ * 回调**唯一且直接**的产物。
+ *
+ * (这条用例原先读的是 `.chat-log` 上一个表示「此刻有没有溢出」的类。那个类
+ * 在全仓 CSS 里没有任何规则选中它,已随「滚动容器类常驻」一起清掉 —— 拿一个
+ * 没有样式消费的类当出口,是在观察副作用的副作用。判据换成上面这一格位移之后,
+ * 开/关两边的结论与改前逐条一致,见 PR 记录。)
  *
  * ── 夹具的边界 ───────────────────────────────────────────────────
  * 滚动盒身上不止一个观察者(`QuoteBar` 也观察它,虚拟滚动开着时还有第三个),
@@ -290,17 +301,19 @@ describe('H2 开关:滚动盒自观察(open-design:disable-chat-log-self-resize-
     expect(followObserver(chatLog()).targets.has(chatLog())).toBe(true);
   });
 
-  it('默认:只改可视高度、不改内容高度,照样能被通知到', async () => {
+  it('默认:只改可视高度、不改内容高度,跟随照样重新贴底', async () => {
     await mountChat();
-    // 内容 300 < 可视 400 —— 滚不动。
-    expect(chatLog().classList.contains('is-scrollable')).toBe(false);
+    // 内容 300 < 可视 400 —— 滚不动,贴底就在 0。
+    expect(chatLog().scrollTop).toBe(0);
 
     // 输入框长高把可视高度挤到 200:内容一个像素都没变,只有滚动盒自己变矮了。
+    // 现在内容溢出 100px,正在跟随的对话应该跟着挪到新的底部。
     geom.clientHeight = 200;
     await resizeOnly(chatLog());
     await flushFrames();
 
-    expect(chatLog().classList.contains('is-scrollable')).toBe(true);
+    expect(maxScrollTop(), '夹具没造出「有得滚」的世界,下面那条会空过').toBe(100);
+    expect(chatLog().scrollTop).toBe(100);
   });
 
   it('开关打开:跟随那条不再观察滚动盒自己', async () => {
@@ -325,18 +338,20 @@ describe('H2 开关:滚动盒自观察(open-design:disable-chat-log-self-resize-
     if (spacer) expect(targets.has(spacer)).toBe(false);
   });
 
-  it('开关打开的代价:纯可视高度变化不再有人通知,读数停在旧值', async () => {
+  it('开关打开的代价:纯可视高度变化不再有人通知,跟随停在旧位置', async () => {
     window.localStorage.setItem(SELF_OBSERVE_DISABLED_KEY, '1');
     await mountChat();
-    expect(chatLog().classList.contains('is-scrollable')).toBe(false);
+    expect(chatLog().scrollTop).toBe(0);
 
     geom.clientHeight = 200;
     await resizeOnly(chatLog());
     await flushFrames();
 
-    // 内容确实溢出了(300 > 200),但没有任何 observer 在看这个盒子,
-    // 于是没人来重算 —— 这就是开关打开后要付的账。
-    expect(chatLog().classList.contains('is-scrollable')).toBe(false);
+    // 内容确实溢出了(300 > 200,还有 100px 可以滚),但没有任何 observer 在看
+    // 这个盒子,于是没人来把跟随重新落到屏幕上 —— 这就是开关打开后要付的账:
+    // 最新那条被长高的输入框压在下面,位置纹丝不动。
+    expect(maxScrollTop(), '夹具没造出「有得滚」的世界,下面那条会空过').toBe(100);
+    expect(chatLog().scrollTop).toBe(0);
   });
 
   it('开关值不是 "1" 时按「关」处理(默认行为不变)', async () => {

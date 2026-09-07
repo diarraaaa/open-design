@@ -168,13 +168,69 @@ QA 报的是「专业版余额 $1.79 发新任务,没有任何低余额提示」
 |---|---|---|
 | **T61** | **软档(`< $2`)那张升级卡改成按轮次锚定的存档件:**<br>① **只在一轮结束后出现,运行中不出现**;<br>② 出现后**锚定在那一轮下面**,第二轮运行期间**不许挪到第二轮下面**;<br>③ 第二轮结束后余额仍不足 → **另出一张新的**,不是搬旧的;<br>④ 它是**那一刻的存档**,值不随后续余额变化而改写。 | 产品口述 2026-09-07,原话:「这个卡片在轮次后最好能固定一下,**它就好像历史记录一样,存档在当时状态了**,不能说我干个啥把当时的失败态搞丢了,我往回看那一轮为啥失败了根本没有依据和想不起来啊」。<br><br>**这是语义变更,不是样式调整**:卡片从「当前余额的实时读数」变成「**这一轮为什么停下来的凭据**」。后来人若看到它不随余额刷新,**那是有意的,不要"修"回去**。<br><br>⚠️ **和 2026-09-02 那条不矛盾**。那条说的是「额度不足和额度耗尽,升级卡**各只有一张**,不存在第二张白色通用报错卡」——指的是**同一时刻同一档不要两块 UI**;本条说的是**不同轮次各自一张**。两者正交。红测 `w62-mid-run-balance-card.test.tsx` 守的是前者,不受本条影响。<br><br>⚠️ **第 ④ 条的体量未定,已单独调研**:若这张卡今天是从**实时钱包状态**派生的,那么刷新 / 重进项目之后它要么消失、要么显示**当前**余额 —— **两种都不满足「凭据」**。真正做到存档可能要把它**落进会话记录**(像一条消息那样持久化),那是跨 `apps/web` / `apps/daemon` / `packages/contracts` 的改动。**①②③ 是纯渲染层,先做;④ 视调研结论单独立项。**<br><br>**其余既有裁决不变**:T51(没有关闭、不做本次会话静音、不挡发送)、T52(阈值 `< $2`)、T53(软档只有这张卡、没有弹窗)、T59(没有用量条)、T60(文案归交付稿,当前已逐字一致)。 |
 
+### T61 ①②③ 已落地(2026-09-07)· ④ 调研结论与待拍板
+
+**①②③ 已实现,纯渲染层,没有动契约。**
+
+- 「一轮结束」的判据 = **daemon 的三个终态**(`succeeded` / `failed` / `canceled`),
+  外加「`runStatus` 缺席但已落 `endedAt`」那一格(非 daemon 模式建消息时 `runStatus`
+  本来就是 `undefined`)。判据写在 `apps/web/src/components/ChatPane.tsx` 的
+  `isFinishedTurn`,和 `apps/web/src/runtime/todos.ts` 认「这一轮收尾了」同一条。
+  **只认 `succeeded` 是错的** —— 跑挂了和被按停恰恰是最该留凭据的两种收尾。
+- 存档账本:`ChatPane` 的 `archiveLowBalanceTurnCard`,key = 那一轮助手消息 id,
+  **只增不删**。卡画在该助手消息紧下面(`ChatRows.renderItem`),位置由 DOM 顺序
+  本身保证,不做任何位置计算。
+- 读数带主:`ProjectView` 的 `amrBalanceCard = { balanceUsd, anchorMessageId }`
+  **装在同一条 state 里**,没有「只写一半」的写法。锚点归属:告警档 → 这一次要跑的
+  那一轮;跑到一半死在钱上 → 那条失败的助手消息;**拦截档 → `null`**(那一轮已被
+  `retractPaintedTurn` 收回,没有轮次可锚),读数照旧落在流水末尾。
+- 红测:`apps/web/tests/components/chat/t61-balance-card-turn-archive.test.tsx`
+  (渲染层四条)+ `ProjectView.amr-balance-card.test.tsx` /
+  `w62-mid-run-balance-wiring.test.tsx` 里新增的锚点接线三条。
+
+**④「存档」今天做不到,要拍板。** 调研结论:
+
+| 问题 | 今天的实际行为 |
+|---|---|
+| 告警档(跑通了但余额低)刷新后 | **卡整个消失。** 这一档在客户端只有 React state,消息上不留任何痕迹 |
+| 跑到一半死在钱上,刷新后 | **卡还在,但数字是「现在的余额」不是「那一轮停下来时的余额」。** 失败事件落库,但 `classifyAmrAccountFailure`(`apps/daemon/src/integrations/vela-errors.ts:181`)拿不到余额、事件里也不带,所以 `ProjectView.tsx:2921` 那个 effect 每次都**现查一次当前钱包**。充完值再刷新,那一轮的卡会写着 `$20.00 / 余额可能撑不完下一个任务` —— 作为凭据是**错的** |
+| 后来又跑通一轮,刷新后 | **卡没了。** `amrInsufficientBalanceFailureMessageId` 只看最后一条助手消息 |
+
+**要真做到 ④,两条路:**
+
+1. **挂在已落库的 `status/error` 事件上(推荐,不用迁移)** —— `events` 存为
+   `events_json` 自由 JSON blob,未知字段原样往返,现有的 `failureCategory` /
+   `failureDetail` 就是这个先例。**约 3 个文件**:`packages/contracts/src/api/chat.ts`
+   (给 `PersistedAgentEvent` 的 `status` 成员加一个可选数字)、web 写入侧
+   (`runtime/chat-events.ts` + `ProjectView` 补查之后再 PUT 一次)、`ChatPane` 读取侧
+   (取代内存账本)。⚠️ 约束:那次 PUT 不能缩短事件数组、不能回退终态,否则
+   `mergeMessageWriteForDaemonBacked`(`apps/daemon/src/routes/project/conversations.ts:501`)
+   会把它丢掉。⚠️ **只覆盖「死在钱上」那一轮**,盖不住「跑通了但余额低」那一档 ——
+   那一轮根本没有 error 事件可挂。
+2. **给消息加一个顶层字段(要迁移)** —— `messages` 表是**类型化列**不是单个 JSON blob,
+   得 `ALTER TABLE` + 改 `listMessages` / `upsertMessage` / `normalizeMessage`。
+   **约 4–5 个文件、8 处改点**,外加对应测试。覆盖面全(两档都能存)。
+
+**更干净但要后端配合的第三条**:让 daemon 在判定 `AMR_INSUFFICIENT_BALANCE` 时把
+当时的余额一起发出来。今天 `server.ts` **根本没有 import 钱包读取器**,run 路径上
+拿不到余额;真要做是 daemon 侧新增一次读。同样盖不住告警档那一轮。
+
+**未决(需产品拍板)**:④ 要不要做、做到哪一档(只盖失败那一轮 = 路 1;两档都盖 =
+路 2)。在拍板之前,①②③ 的存档只在**当前会话内**成立 —— 刷新即回到上表的行为。
+
 ## 五之十一、文案对齐的三处口径(T62–T64)
 
 | # | 裁决 | 依据 / 说明 |
 |---|---|---|
 | **T62** | **S21 保持我们的三态,不按新文案文档合并成一格。** | 产品口述 2026-09-07:「**S21 我们三态就三态**」。<br>文档 S21 只给了一格,而我们有三个**可分辨**的状态:`outputInvalid`(伪造角色标记)、`emptyOutput`(空输出)、`toolLoop`(工具死循环)。把同一句抄给三个等于**悄悄合并三个状态** —— 那是产品设计不是文案活。<br>已落地:只对最字面对应的 `outputInvalid` 采用新文案;`title.emptyOutput`「没有任何输出」与 `title.toolLoop`「操作陷入循环」**保持不动**。 |
-| **T63** | **S17「登录已失效」先放放。** | 产品口述 2026-09-07:「**S17 没这个就先放放**」。<br>我们**没有这个状态**:`chat.runError.title.authRequired` 和 `chat.amrError.authMessage` 只存在于类型 union 和 19 个 locale 里,**没有任何映射引用,是死键**。真实的 401/403 走 `AMR_AUTH_REQUIRED → title.signInRequired`,也就是 S04 那张卡。<br>**未决**(留给产品):S17 是不是就等于 S04?还是要新开一条分流?连带「被移出团队」「客户端版本过旧」两格也没有对应分流(`vela-errors.ts` 只有 3 个码,全仓不读 HTTP 状态码,403/426 分不出来)。 |
+| **T63** | **S17「登录已失效」先放放。** | 产品口述 2026-09-07:「**S17 没这个就先放放**」。<br>我们**没有这个状态**:`chat.runError.title.authRequired` 和 `chat.amrError.authMessage` 只存在于类型 union 和 19 个 locale 里,**没有任何映射引用,是死键**。真实的 401/403 走 `AMR_AUTH_REQUIRED → title.signInRequired.amr`(T65 拆键前叫 `title.signInRequired`),也就是 S04 那张卡。<br>**未决**(留给产品):S17 是不是就等于 S04?还是要新开一条分流?连带「被移出团队」「客户端版本过旧」两格也没有对应分流(`vela-errors.ts` 只有 3 个码,全仓不读 HTTP 状态码,403/426 分不出来)。 |
 | **T64** | **S29 正文的插值槽先不改。** | 产品口述 2026-09-07:「**S29 插值槽先不改吧?**」。<br>S29 标题已按新稿改(「正在恢复网络连接」/「网络连接未能恢复」)。正文「正在进行第 {重连次数}/{最大重连次数} 次连接尝试,请稍候。」**未采用** —— 组件 22 是**一行状态**不是卡,没有正文槽;计数是紧跟标题的 `<span>`,要新增两个插值槽 + 改结构。<br>顺带记:`{重连次数}/{最大重连次数}` 这两个值**今天已经贯通到 UI**(`Reconnect.tsx` 已在画 `2/5`),只是形态是一行不是两段。 |
+
+## 五之十二、S01 / S02 / S04 的标题补齐(T65)
+
+| # | 裁决 | 依据 / 说明 |
+|---|---|---|
+| **T65** | **第一批跳过的 S01 / S02 / S04 三格标题按新文案落地,连带两处接线。** | 第一批只落了这三格的**正文**,标题跳过 —— 不是文案没给,是**我们缺接线**。产品口述 2026-09-07 对这三格的处置:「**那咋办**」。逐条如下:<br><br>**① 标题从来不传插值。** `ChatPane` 那一行是裸的 `t(runFailureUi.titleKey)`,一个变量都不给。新稿 S01「未检测到 {智能体}」、S02「{智能体} 尚未登录」把主语放进了标题,照抄进字典会把**字面的 `{agent}`** 摆到用户脸上。<br>**做法:复用正文那一份取值,不另起 `titleVars`。** 正文早就在传 `{ agent: failedAgentLabel, ...messageVars }`,提成 `runFailureCopyVars` 后标题和正文同吃一份 —— 两处名的既然是同一个 `{agent}`,就没有让它们各取各的的理由,那只会给「标题说 Claude、正文说 Codex」留一道缝。用不到的槽(`{retryAt}` / `{cause}`)传过去无害,`t` 只替换字面出现的占位符。<br><br>**② `title.signInRequired` 一个键服务两格,必须拆。** S02(本地 agent「{智能体} 尚未登录」)和 S04(Cloud「Open Design 尚未登录」)不是同一句话,一个键装不下。<br>拆成 `title.signInRequired.other`(S02)/ `title.signInRequired.amr`(S04),命名对齐正文已有的 `signInMessage.other` / `signInMessage.amr`。**三个调用点全部明确落位**:AMR 分支(`AMR_AUTH_REQUIRED` / `AGENT_AUTH_REQUIRED` / `UNAUTHORIZED`)→ `.amr`;Antigravity 的终端登录分支 → `.other`(它的登录只能在终端做,但它**是**一个本地 agent 没登录);通用非 AMR 分支 → `.other`。旧键已从类型 union 与 19 个 locale 中删除,不留「随便哪一边」的落点。<br><br>**③ S01 标题连带换键内容**:`title.cliMissing` 从固定短语「智能体未安装」改成「未检测到 {agent}」,两个调用点(`AGENT_UNAVAILABLE` 码 + `cli_not_installed` detail)共用。<br><br>⚠️ **S03 和 S04 的标题 / 正文在原文档里逐字相同**(都是「Open Design 尚未登录」+「请先登录，以便查看项目和继续对话。」)。本次只接 S04 那一格 —— S03(Open Design 账号登录过期)在我们这儿不是报错卡,是另一条路。 |
 
 ## 六、需要我做实测才能定的(3 条,不用你们操心)
 

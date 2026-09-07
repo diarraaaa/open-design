@@ -34,6 +34,7 @@ import {
   listConversations,
   listMessages,
   loadTabs,
+  saveMessage,
 } from '../../src/state/projects';
 import {
   fetchPreviewComments,
@@ -282,6 +283,7 @@ vi.mock('../../src/components/ChatPane', () => ({
     sendDisabled?: boolean;
     queuedItems?: Array<{ prompt: string }>;
     amrBalanceCardUsd?: number | null;
+    amrBalanceCardAnchorMessageId?: string | null;
     amrBalanceCardUnavailable?: boolean;
     onSend?: (
       prompt: string,
@@ -298,6 +300,15 @@ vi.mock('../../src/components/ChatPane', () => ({
         </div>
         <div data-testid="amr-balance-unavailable-prop">
           {props.amrBalanceCardUnavailable === true ? 'yes' : 'no'}
+        </div>
+        {/* T61:读数是替哪一轮取的 —— 跑到一半那条路该指着**那条失败的助手消息**。 */}
+        <div data-testid="amr-balance-anchor-prop">
+          {props.amrBalanceCardAnchorMessageId ?? 'none'}
+        </div>
+        <div data-testid="failed-assistant-id">
+          {[...(props.messages ?? [])]
+            .reverse()
+            .find((m) => m.role === 'assistant' && m.runStatus === 'failed')?.id ?? ''}
         </div>
         <button
           type="button"
@@ -318,6 +329,7 @@ const mockedCheckAmrBalanceGate = vi.mocked(checkAmrBalanceGate);
 const mockedListConversations = vi.mocked(listConversations);
 const mockedCreateConversation = vi.mocked(createConversation);
 const mockedListMessages = vi.mocked(listMessages);
+const mockedSaveMessage = vi.mocked(saveMessage);
 const mockedLoadTabs = vi.mocked(loadTabs);
 const mockedFetchPreviewComments = vi.mocked(fetchPreviewComments);
 const mockedFetchProjectFiles = vi.mocked(fetchProjectFiles);
@@ -480,6 +492,38 @@ const snapshot = (balanceUsd: string): AmrWalletSnapshot => ({
   source: 'vela_api',
 });
 
+/** daemon 在一轮跑到一半时判定的失败。`code` 就是错误码。 */
+function failMidRunWith(code: string) {
+  mockedStreamViaDaemon.mockImplementation(async (options: unknown) => {
+    const opts = options as {
+      onRunCreated?: (runId: string) => void;
+      handlers: { onError: (error: Error) => void };
+    };
+    opts.onRunCreated?.('run-mid-run-balance');
+    const err = new Error('insufficient balance') as Error & { code?: string };
+    err.code = code;
+    opts.handlers.onError(err);
+  });
+}
+
+/**
+ * 发一条,并等到 run 真的起来为止。
+ *
+ * 「点了按钮」不等于「run 起来了」:composer 在项目还在加载时是禁用的,
+ * 而这一页要断言的东西全在 run 失败之后。所以先等按钮可用,再等
+ * `streamViaDaemon` 真的被调用 —— 否则后面每一条断言都可能只是赢在
+ * 「什么都还没发生」上。
+ */
+async function sendOnce() {
+  renderProjectView({ project: { ...project(), pendingPrompt: null } as never });
+  await screen.findByTestId('normal-send');
+  await waitFor(() =>
+    expect((screen.getByTestId('normal-send') as HTMLButtonElement).disabled).toBe(false),
+  );
+  fireEvent.click(screen.getByTestId('normal-send'));
+  await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalled());
+}
+
 describe('跑到一半余额不足:谁点亮升级卡', () => {
   beforeEach(() => {
     resourceContextObservations.length = 0;
@@ -516,38 +560,6 @@ describe('跑到一半余额不足:谁点亮升级卡', () => {
     resetWorkspaceContextCache();
   });
 
-  /** daemon 在一轮跑到一半时判定的失败。`code` 就是错误码。 */
-  function failMidRunWith(code: string) {
-    mockedStreamViaDaemon.mockImplementation(async (options: unknown) => {
-      const opts = options as {
-        onRunCreated?: (runId: string) => void;
-        handlers: { onError: (error: Error) => void };
-      };
-      opts.onRunCreated?.('run-mid-run-balance');
-      const err = new Error('insufficient balance') as Error & { code?: string };
-      err.code = code;
-      opts.handlers.onError(err);
-    });
-  }
-
-  /**
-   * 发一条,并等到 run 真的起来为止。
-   *
-   * 「点了按钮」不等于「run 起来了」:composer 在项目还在加载时是禁用的,
-   * 而这一页要断言的东西全在 run 失败之后。所以先等按钮可用,再等
-   * `streamViaDaemon` 真的被调用 —— 否则后面每一条断言都可能只是赢在
-   * 「什么都还没发生」上。
-   */
-  async function sendOnce() {
-    renderProjectView({ project: { ...project(), pendingPrompt: null } as never });
-    await screen.findByTestId('normal-send');
-    await waitFor(() =>
-      expect((screen.getByTestId('normal-send') as HTMLButtonElement).disabled).toBe(false),
-    );
-    fireEvent.click(screen.getByTestId('normal-send'));
-    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalled());
-  }
-
   it('跑到一半的余额不足:把钱包读数交给升级卡', async () => {
     mockedFetchAmrWalletSnapshot.mockResolvedValue(snapshot('0'));
     workspaceBillingResponse = provenWorkspaceBilling('0');
@@ -558,6 +570,26 @@ describe('跑到一半余额不足:谁点亮升级卡', () => {
     await waitFor(() =>
       expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0'),
     );
+  });
+
+  /*
+   * 红测(T61):这份补查读数是替**那条失败的助手消息**取的,卡要挂在它下面。
+   * 少了锚点,卡会退回流水末尾,下一轮跑起来时跟着往下挪 —— 产品要的正好相反:
+   * 「往回看那一轮为啥失败了」得有个钉在原处的凭据。
+   */
+  it('补查读数锚在那条失败的助手消息上', async () => {
+    mockedFetchAmrWalletSnapshot.mockResolvedValue(snapshot('0'));
+    workspaceBillingResponse = provenWorkspaceBilling('0');
+    failMidRunWith('AMR_INSUFFICIENT_BALANCE');
+
+    await sendOnce();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0'),
+    );
+    const anchor = screen.getByTestId('amr-balance-anchor-prop').textContent;
+    expect(anchor).not.toBe('none');
+    expect(anchor).toBe(screen.getByTestId('failed-assistant-id').textContent);
   });
 
   it('余额还剩一点的那一档,念的是真实读数,不是 0', async () => {
@@ -653,5 +685,188 @@ describe('跑到一半余额不足:谁点亮升级卡', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getByTestId('amr-balance-unavailable-prop').textContent).toBe('no');
+  });
+});
+
+/*
+ * 红测(**T61 ④**):**升级卡上的数字是「那一轮停下来时」的,不是「现在」的。**
+ *
+ * 产品口述 2026-09-07,逐字:「这个卡片在轮次后最好能固定一下,它就好像历史记录
+ * 一样,**存档在当时状态了**,不能说我干个啥把当时的失败态搞丢了,我往回看那一轮
+ * 为啥失败了根本没有依据和想不起来啊」。
+ *
+ * ①②③ 是纯渲染层,已经由 `chat/t61-balance-card-turn-archive.test.tsx` 守着,
+ * 而且**只在当前会话内成立** —— 存档账本是 `ChatPane` 的一个 ref,刷新就没了。
+ * 这一页守的是刷新之后:那条失败**是落了库的**,所以卡还在;但数字是
+ * `ProjectView` 每次重新去查钱包现取的,于是充完值再回来看,那一轮会写着
+ * 「剩余额度 $20.00 / 余额可能撑不完下一个任务」—— 数字是今天的、句子是当时的,
+ * 作为凭据是错的,比卡直接消失更误导。
+ *
+ * 「重开项目」在这一层就是 `listMessages` 把那条失败消息读回来,而**不发新的一轮**。
+ */
+describe('T61 ④ 存档:那一轮的余额不随后来的钱包改写', () => {
+  beforeEach(() => {
+    resourceContextObservations.length = 0;
+    workspaceBillingResponse = null;
+    window.sessionStorage.clear();
+    window.localStorage.clear();
+    resetWorkspaceContextCache();
+    stubFetch();
+    mockedListConversations.mockImplementation(async (projectId: string) => [
+      conversation(projectId),
+    ]);
+    mockedCreateConversation.mockImplementation(async (projectId: string) =>
+      conversation(projectId),
+    );
+    mockedListMessages.mockResolvedValue([]);
+    mockedFetchPreviewComments.mockResolvedValue([]);
+    mockedFetchProjectFiles.mockResolvedValue([]);
+    mockedFetchBrands.mockResolvedValue([]);
+    mockedCheckAmrBalanceGate.mockResolvedValue({ kind: 'allow' });
+    workspaceScopeMocks.projectScope = { loading: true, scope: null };
+    workspaceScopeMocks.ambientContext = CALLER_CONTEXT;
+    projectCollabMocks.writerAuthority = 'allowed';
+    projectCollabMocks.viewerOnly = false;
+    mockedLoadTabs.mockResolvedValue({ tabs: [], active: null });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    resetWorkspaceContextCache();
+  });
+
+  const FAILED_TURN_ID = 'assistant-died-on-money';
+
+  /**
+   * 一条**已经落库**的「跑到一半死在钱上」的助手消息 —— 重开项目时
+   * `listMessages` 读回来的就是这个形状。
+   *
+   * `archivedBalanceUsd` 给了,就表示那一轮停下来时的余额已经记在这条失败事件上。
+   */
+  function persistedBalanceFailureTurn(archivedBalanceUsd?: number): ChatMessage[] {
+    return [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: SEED_PROMPT,
+        createdAt: 1,
+      },
+      {
+        id: FAILED_TURN_ID,
+        role: 'assistant',
+        content: '写到一半就停了',
+        createdAt: 2,
+        runId: 'run-died-on-money',
+        runStatus: 'failed',
+        agentId: 'amr',
+        startedAt: 2,
+        endedAt: 3,
+        events: [
+          {
+            kind: 'status',
+            label: 'error',
+            detail: 'insufficient balance',
+            code: 'AMR_INSUFFICIENT_BALANCE',
+            ...(archivedBalanceUsd === undefined
+              ? {}
+              : { amrBalanceUsd: archivedBalanceUsd }),
+          },
+        ],
+      },
+    ] as unknown as ChatMessage[];
+  }
+
+  /** 重开项目:不发新的一轮,只把库里那条失败读回来。 */
+  async function reopenProject() {
+    renderProjectView({ project: { ...project(), pendingPrompt: null } as never });
+    await waitFor(() =>
+      expect(screen.getByTestId('failed-assistant-id').textContent).toBe(FAILED_TURN_ID),
+    );
+  }
+
+  /**
+   * 缺陷本体。充值之后钱包是 $20,而那一轮是在 $0.35 上停下来的 ——
+   * 卡上该念的是 $0.35。
+   */
+  it('钱包后来涨到 $20,那一轮的卡仍念停下来时的 $0.35', async () => {
+    mockedListMessages.mockResolvedValue(persistedBalanceFailureTurn(0.35));
+    mockedFetchAmrWalletSnapshot.mockResolvedValue(snapshot('20'));
+    workspaceBillingResponse = provenWorkspaceBilling('20');
+
+    await reopenProject();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-anchor-prop').textContent).toBe(FAILED_TURN_ID),
+    );
+    expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0.35');
+  });
+
+  /**
+   * 存档之后就**不该再去问钱包**。这条不是性能顺带 —— 它是「不再现查」这句话
+   * 唯一能被观察到的形态:只要还查,数字就还有跟着今天的余额跑的路。
+   */
+  it('存档过的那一轮:重开时不再去查钱包', async () => {
+    mockedListMessages.mockResolvedValue(persistedBalanceFailureTurn(0.35));
+    mockedFetchAmrWalletSnapshot.mockResolvedValue(snapshot('20'));
+    workspaceBillingResponse = provenWorkspaceBilling('20');
+
+    await reopenProject();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0.35'),
+    );
+    expect(mockedFetchAmrWalletSnapshot).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 写入那一半。第一次替这一轮取到读数时,要把它**写回那条失败消息**,
+   * 否则下次重开又只能现查 —— 上面两条也就无从谈起。
+   */
+  it('第一次取到读数时把它写回那条失败消息', async () => {
+    mockedFetchAmrWalletSnapshot.mockResolvedValue(snapshot('0.35'));
+    workspaceBillingResponse = provenWorkspaceBilling('0.35');
+    failMidRunWith('AMR_INSUFFICIENT_BALANCE');
+
+    await sendOnce();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0.35'),
+    );
+
+    await waitFor(() => {
+      const archived = mockedSaveMessage.mock.calls
+        .map((call) => call[2])
+        .filter((message) => message?.role === 'assistant')
+        .flatMap((message) => message?.events ?? [])
+        .filter(
+          (event) =>
+            event.kind === 'status'
+            && event.label === 'error'
+            && event.code === 'AMR_INSUFFICIENT_BALANCE',
+        )
+        .map((event) => (event as { amrBalanceUsd?: number }).amrBalanceUsd);
+      expect(archived).toContain(0.35);
+    });
+  });
+
+  /**
+   * 反向对照:**没存档过**的那一轮照旧现查 —— 这是上面「不再查」那条的尺子。
+   * 它在修复前后都该绿;只有它绿,「存档过就不查」才说明是存档起的作用,
+   * 而不是这一页根本没能力发出那次查询。
+   */
+  it('没存档过的那一轮:重开时照旧现查钱包', async () => {
+    mockedListMessages.mockResolvedValue(persistedBalanceFailureTurn());
+    mockedFetchAmrWalletSnapshot.mockResolvedValue(snapshot('20'));
+    workspaceBillingResponse = provenWorkspaceBilling('20');
+
+    await reopenProject();
+
+    await waitFor(() => expect(mockedFetchAmrWalletSnapshot).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('20'),
+    );
   });
 });

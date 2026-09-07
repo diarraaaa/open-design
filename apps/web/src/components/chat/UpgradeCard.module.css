@@ -2,7 +2,9 @@
  * 升级卡(设计稿组件 18)。
  *
  * 形态取自交付稿的 `.up`:**流水里的一张卡**,不是弹窗、不挡发送。
- * 出现时机由用户 2026-08-26 裁决:**运行结束之后**(见规格 D58)。
+ * 出现时机由用户 2026-08-26 裁决:**运行结束之后**(见规格 D58);
+ * 2026-09-07 起还要**锚定在那一轮下面、不随新一轮移动**(规格 T61),
+ * 判定在 `ChatPane.archiveLowBalanceTurnCard`。
  *
  * 产品原有的软提醒弹窗 `AmrLowBalanceDialog`(居中硬阻断)已于 2026-09-06 删除
  * (规格 T53),软那一档现在只剩这张卡;这张卡走 D4「不阻塞」的取向,
@@ -56,6 +58,12 @@
   border-radius: var(--chat-radius-2xl, var(--radius-2xl));
   background: var(--upgrade-card-bg);
   color: var(--upgrade-card-ink);
+  /* 裁的是自己的辉光和圆角(上面那枚 `::after` 铺满右上角)。
+     ⚠️ 这一句同时把这张卡在 `.chat-log` 里的**自动最小尺寸变成 0** ——
+     它曾经因此被那根列向 flex 滚动容器当成泄压阀,一个人吃下全部负空间,
+     收到只剩内距,下半截被这句 `overflow: hidden` 自己裁掉(2026-09-07 QA)。
+     兜底不在这里,在流水那一侧:`styles/chat.css` 的 `.chat-log > *`
+     写死了「一行都不许被压扁」。要改那条之前先读它的 docblock。 */
   overflow: hidden;
 }
 
