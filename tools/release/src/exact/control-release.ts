@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
-import { isReleaseChannel } from "@open-design/release";
+import { exactStorageObject, isReleaseChannel } from "@open-design/release";
 
 import { canonicalBytes, checkedFile, readObject, writeObject, type JsonObject } from "./control-common.ts";
 import { createAcceptedShellBaselineReceipt } from "./accepted-baseline.ts";
@@ -72,7 +72,7 @@ function storage(requestValue: JsonObject, channel: string): ReleaseTarget {
   return {
     endpointUrl,
     bucket,
-    latestChannelHeadUrl: `${endpointUrl}/${bucket}/${channel}/latest/channel-head.json`,
+    latestChannelHeadUrl: `${endpointUrl}/${bucket}/${exactStorageObject({ channel, kind: "channel-head" }).key}`,
     publicBaseUrl,
   };
 }
@@ -308,10 +308,11 @@ async function promoteAcceptedElectronBaseline(input: JsonObject, receiptPath: s
     .filter(([id]) => id !== "closure.acceptance.hot" || hotAccepted)
     .map(([, { identity }]) => identity));
   const snapshotBody = canonicalBytes(snapshot), snapshotDigest = createHash("sha256").update(snapshotBody).digest("hex");
-  const storageBase = `${policy.target.endpointUrl}/${policy.target.bucket}/${channel}/accepted/electron/${target}`;
-  const publicBase = `${policy.target.publicBaseUrl}/${channel}/accepted/electron/${target}`;
-  const snapshotStorageUrl = `${storageBase}/${releaseVersion}-${snapshotDigest}.json`;
-  const snapshotUrl = `${publicBase}/${releaseVersion}-${snapshotDigest}.json`;
+  const storageBase = `${policy.target.endpointUrl}/${policy.target.bucket}`;
+  const publicBase = policy.target.publicBaseUrl;
+  const snapshotKey = exactStorageObject({ channel, releaseVersion, target, digest: snapshotDigest, kind: "accepted" }).key;
+  const snapshotStorageUrl = `${storageBase}/${snapshotKey}`;
+  const snapshotUrl = `${publicBase}/${snapshotKey}`;
   const immutable = await putImmutable(snapshotStorageUrl, snapshotBody, "application/json; charset=utf-8");
   const immutableReadback = await request(snapshotStorageUrl);
   if (!immutableReadback.ok || !Buffer.from(await immutableReadback.arrayBuffer()).equals(snapshotBody)) throw new Error("accepted baseline immutable readback failed");
@@ -324,7 +325,8 @@ async function promoteAcceptedElectronBaseline(input: JsonObject, receiptPath: s
     target,
     receipt: { url: snapshotUrl, sha256: `sha256:${snapshotDigest}`, size: snapshotBody.byteLength },
   };
-  const pointerBody = canonicalBytes(pointer), pointerStorageUrl = `${storageBase}/latest.json`, pointerUrl = `${publicBase}/latest.json`;
+  const pointerKey = exactStorageObject({ channel, target, kind: "accepted-head" }).key;
+  const pointerBody = canonicalBytes(pointer), pointerStorageUrl = `${storageBase}/${pointerKey}`, pointerUrl = `${publicBase}/${pointerKey}`;
   const current = await request(pointerStorageUrl);
   let replayed = false, pointerEtag = "";
   const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=60" };

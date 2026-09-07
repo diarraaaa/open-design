@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-import { parseReleaseBaseVersion, parseReleaseVersion } from "@open-design/release";
+import { exactStorageObject, parseReleaseBaseVersion, parseReleaseVersion } from "@open-design/release";
 
 import { readObject, writeObject, type JsonObject } from "../exact/control-common.ts";
 
@@ -151,7 +151,7 @@ function releaseTarget(value: unknown, channel: string): ReleaseTarget {
     || canonicalPublicBaseUrl !== candidate.publicBaseUrl || candidate.publicBaseUrl.endsWith("/")) {
     throw new Error("release policy target public base URL is not canonical");
   }
-  const latestChannelHeadUrl = `${candidate.endpointUrl}/${candidate.bucket}/${channel}/latest/channel-head.json`;
+  const latestChannelHeadUrl = `${candidate.endpointUrl}/${candidate.bucket}/${exactStorageObject({ channel, kind: "channel-head" }).key}`;
   if (candidate.latestChannelHeadUrl !== latestChannelHeadUrl) {
     throw new Error("release policy latest channel head URL differs from its endpoint, bucket, or channel");
   }

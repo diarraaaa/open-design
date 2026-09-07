@@ -9,7 +9,7 @@ import {
 
 export const EXACT_PLAN_SCHEMA_VERSION = 1 as const;
 
-export type ExactTarget = "darwin-arm64" | "darwin-x64" | "win32-x64";
+export type ExactTarget = import("@open-design/release").ExactStorageTarget;
 
 export type ExactPlanNodeId =
   | "closure.acceptance.hot"
