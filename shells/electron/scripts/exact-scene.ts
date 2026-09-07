@@ -35,6 +35,7 @@ const authority = await buildElectronStandaloneAuthority(resolve(dirname(input.s
 const receipt = await assembleElectronScene({
   authorityResources: [
     authority.host,
+    authority.updaterProvider,
     authority.supervisor,
     { name: "closure.mjs", path: input.acceptedClosureBaselineFile },
     { name: "standalone-launcher.mjs", path: input.standaloneLauncherFile },

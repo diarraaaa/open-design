@@ -64,10 +64,11 @@ const required = (name: string) => {
   return resource;
 };
 const host = required("standalone-host.mjs");
+const updaterProvider = required("electron-updater.mjs");
 const supervisor = required("supervisor.mjs");
 const closure = required(sceneManifest.closure.file);
 const launcher = required(sceneManifest.standalone.entrypoint);
-for (const resource of [host, supervisor, closure, launcher]) await copyFile(resource.path, join(stagingRoot, resource.name));
+for (const resource of [host, updaterProvider, supervisor, closure, launcher]) await copyFile(resource.path, join(stagingRoot, resource.name));
 const closureResources = JSON.parse(await readFile(required("closure-resources.json").path, "utf8")) as { resources?: unknown };
 if (!Array.isArray(closureResources.resources) || !Array.isArray(contentEnvelope.metadata.resources)) {
   throw new Error("Electron exact content lacks its Closure resource binding");
@@ -89,11 +90,12 @@ const resourceSeeds = await Promise.all(closureResources.resources.map(async (ca
   return Object.freeze({ ...await descriptor(resource.path, resource.name), blobSha256: value.sha256 });
 }));
 const installation = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   channel: manifest.channel,
   releaseVersion: contentEnvelope.metadata.releaseVersion,
   target: input.target,
   host: await descriptor(host.path, host.name),
+  updaterProvider: await descriptor(updaterProvider.path, updaterProvider.name),
   supervisor: await descriptor(supervisor.path, supervisor.name),
   content: await descriptor(contentPath),
   trust: await descriptor(trustPath),

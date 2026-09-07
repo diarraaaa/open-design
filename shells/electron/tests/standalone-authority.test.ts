@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { findSidecarProcesses, getSidecarStatus, stopSidecar } from "@open-design/sidecar/authority";
+import { findSidecarProcesses, getSidecarStatus, stopSidecars } from "@open-design/sidecar/authority";
 import {
   canonicalJson,
   signStandaloneChannelHead,
@@ -186,11 +186,12 @@ describe("Electron production Standalone authority", () => {
     const trust = Buffer.from(canonicalJson({ schemaVersion: 1, keys: [{ keyId: "release", publicKey: keys.publicKey.export({ format: "pem", type: "spki" }).toString() }] }));
     const target = process.platform === "win32" ? `win32-${process.arch}` : `${process.platform}-${process.arch}`;
     const installation = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       channel: metadata.channel,
       releaseVersion: metadata.releaseVersion,
       target,
       host: descriptor("standalone-host.mjs", host),
+      updaterProvider: descriptor("electron-updater.mjs", await readFile(built.updaterProvider.path)),
       supervisor: descriptor("supervisor.mjs", supervisor),
       content: descriptor("standalone-content.json", content),
       trust: descriptor("standalone-trust.json", trust),
@@ -236,6 +237,11 @@ describe("Electron production Standalone authority", () => {
       expect(prepared.generation.releaseVersion).toBe("0.1.0-betahyx.1");
       expect(prepared.generation.releaseVersion).not.toBe(manifest.version);
       stamp = bindElectronPhysicalResourceSet(physicalResources, prepared.binding).resources[0]!.stamp;
+      const providerStamp = { ...stamp, app: "electron-updater" };
+      const providerProcesses = await findSidecarProcesses(providerStamp);
+      const hostProcesses = await findSidecarProcesses(stamp);
+      expect(providerProcesses.length).toBeGreaterThan(0);
+      expect(providerProcesses.every(({ pid }) => !hostProcesses.some((host) => host.pid === pid))).toBe(true);
       expect(await prepared.updater.readSnapshot()).toMatchObject({ state: "idle", shellType: "electron" });
       const handle = await prepared.start({
         attachment: { id: "electron-test", shell: manifest.shell },
@@ -644,11 +650,13 @@ describe("Electron production Standalone authority", () => {
       expect(closed[0]).toEqual(closed[1]);
       expect(await findSidecarProcesses(stamp)).toEqual([]);
       expect(await lifecycleLedger.read()).toMatchObject({ state: "stopped", attachments: [] });
+      expect(await findSidecarProcesses(providerStamp)).toEqual([]);
     } finally {
-      if (stamp != null) {
-        const stopped = await stopSidecar(stamp, { termGraceMs: 1_000, killGraceMs: 1_000 });
-        expect(stopped.remainingPids).toEqual([]);
-      }
+      const stopped = await stopSidecars(physicalResources.resources.map(({ stamp: resourceStamp }) => ({
+        stamp: { ...resourceStamp, channel: manifest.channel, namespace: manifest.namespace },
+        options: { termGraceMs: 1_000, killGraceMs: 1_000 },
+      })));
+      expect(stopped.remainingPids).toEqual([]);
     }
   }, 30_000);
 });

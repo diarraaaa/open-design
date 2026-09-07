@@ -16,8 +16,8 @@ it.each([{ survivors: [] }, { survivors: [{ pid: 99 }] }])("reports physical sur
   expect(receipt).not.toHaveProperty("retainedStandaloneReferences");
   expect(sidecar.status).not.toHaveBeenCalled();
   expect(sidecar.stop).toHaveBeenCalledExactlyOnceWith({ app: "electron", channel: "betahyx", mode: "runtime", namespace: "stop-test", source: "tools-pack" });
-  expect(sidecar.find).toHaveBeenCalledTimes(3);
-  for (const app of ["standalone", "daemon", "web"]) {
+  expect(sidecar.find).toHaveBeenCalledTimes(4);
+  for (const app of ["standalone", "daemon", "web", "electron-updater"]) {
     expect(sidecar.find).toHaveBeenCalledWith({ app, channel: "betahyx", mode: "runtime", namespace: "stop-test", source: "standalone" });
   }
 });

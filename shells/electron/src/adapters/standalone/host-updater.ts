@@ -5,10 +5,10 @@ import type {
   StandaloneShellUpdaterAction,
   StandaloneShellUpdaterActionResult,
   StandaloneShellUpdaterSnapshot,
+  StandaloneLifecycleTransitionPort,
 } from "@open-design/standalone";
 import { stageElectronInstallerArtifact } from "@open-design/electron-kit/installation";
 
-import type { StandaloneHostLifecycle } from "@open-design/standalone";
 import { ElectronStandaloneShellUpdaterLedger } from "./shell-updater-ledger.js";
 import type { ElectronReleaseExactFeed } from "./release-feed.js";
 import type { ElectronStandaloneShellCandidateLedger } from "./shell-updater-candidate.js";
@@ -20,7 +20,7 @@ export class ElectronStandaloneHostUpdater {
 
   constructor(
     readonly shellType: string,
-    private readonly lifecycle: StandaloneHostLifecycle,
+    private readonly lifecycle: Pick<StandaloneLifecycleTransitionPort, "beginTransition">,
     private readonly ledger: ElectronStandaloneShellUpdaterLedger,
     private readonly release?: Readonly<{
       authorityRoot: string;
@@ -62,7 +62,7 @@ export class ElectronStandaloneHostUpdater {
         return result("unsupported", snapshot);
       }
       const installAttemptId = randomUUID();
-      const transition = await this.lifecycle.beginTransition("shell-install", {
+      const transition = await this.lifecycle.beginTransition(this.ledger.scope, "shell-install", {
         attemptId: installAttemptId,
         ownerShellType: this.shellType,
         force: action === "force-stop-and-install",
@@ -88,7 +88,7 @@ export class ElectronStandaloneHostUpdater {
         });
         return result("accepted", applying);
       } catch (error) {
-        await this.lifecycle.releaseTransition(transition.transition.token, transition.transition.fence).catch(() => undefined);
+        await transition.transition.release().catch(() => undefined);
         throw error;
       }
     });

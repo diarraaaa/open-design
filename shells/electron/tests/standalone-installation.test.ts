@@ -60,11 +60,12 @@ async function installedFixture() {
     keys: [{ keyId: "release", publicKey: keys.publicKey.export({ format: "pem", type: "spki" }).toString() }],
   }));
   const declaration = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     channel: metadata.channel,
     releaseVersion: metadata.releaseVersion,
     target: "darwin-arm64",
     host: descriptor("standalone-host.mjs", host),
+    updaterProvider: descriptor("electron-updater.mjs", host),
     supervisor: descriptor("supervisor.mjs", supervisor),
     content: descriptor("standalone-content.json", content),
     trust: descriptor("standalone-trust.json", trust),
@@ -76,6 +77,7 @@ async function installedFixture() {
   } as const;
   await Promise.all([
     writeFile(join(root, declaration.host.file), host),
+    writeFile(join(root, declaration.updaterProvider.file), host),
     writeFile(join(root, declaration.supervisor.file), supervisor),
     writeFile(join(root, declaration.content.file), content),
     writeFile(join(root, declaration.trust.file), trust),
@@ -103,12 +105,21 @@ describe("Electron Standalone installed authority input", () => {
     await expect(loadElectronStandaloneAuthorityResources(fixture.root)).resolves.toEqual([
       { name: "standalone-installation.json", path: join(fixture.root, "standalone-installation.json") },
       { name: "standalone-host.mjs", path: join(fixture.root, "standalone-host.mjs") },
+      { name: "electron-updater.mjs", path: join(fixture.root, "electron-updater.mjs") },
       { name: "supervisor.mjs", path: join(fixture.root, "supervisor.mjs") },
       { name: "standalone-content.json", path: join(fixture.root, "standalone-content.json") },
       { name: "standalone-trust.json", path: join(fixture.root, "standalone-trust.json") },
       { name: "standalone-launcher.mjs", path: join(fixture.root, "standalone-launcher.mjs") },
       { name: "closure.mjs", path: join(fixture.root, "closure.mjs") },
     ]);
+  });
+
+  it("rejects updater provider byte drift before launch", async () => {
+    const fixture = await installedFixture();
+    await writeFile(join(fixture.root, fixture.declaration.updaterProvider.file), "tampered");
+    await expect(loadElectronStandaloneInstallation({ resourceRoot: fixture.root, channel: "betahyx", target: "darwin-arm64" }))
+      .rejects.toThrow("Electron updater provider");
+    await expect(loadElectronStandaloneAuthorityResources(fixture.root)).rejects.toThrow("updater provider");
   });
 
   it("rejects installed byte drift before trusting content", async () => {

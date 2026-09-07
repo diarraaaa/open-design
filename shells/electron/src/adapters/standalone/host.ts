@@ -11,6 +11,7 @@ import {
 } from "@open-design/sidecar/authority";
 import {
   StandaloneHostRuntime,
+  StandaloneHostControlUpdater,
   createStandaloneRuntimeLayoutCapabilityHandler,
   createStandaloneShellCapabilityRouter,
   createStandaloneShellUpdaterCapabilityHandler,
@@ -24,11 +25,8 @@ import {
 } from "@open-design/standalone";
 import { StandaloneHostLifecycle } from "@open-design/standalone";
 import { StandaloneHostLifecycleLedger } from "@open-design/standalone";
-import { ElectronStandaloneHostUpdater } from "./host-updater.js";
-import { ElectronStandaloneShellUpdaterLedger } from "./shell-updater-ledger.js";
-import { ElectronReleaseExactFeed } from "./release-feed.js";
-import { ElectronStandaloneShellCandidateLedger } from "./shell-updater-candidate.js";
-import { loadElectronStandaloneInstallation, resolveElectronStandaloneTarget, type ResolvedElectronStandaloneInstallation } from "./installation.js";
+import { createStandaloneHostControlTransport } from "./control-client.js";
+import { loadElectronStandaloneInstallation, resolveElectronStandaloneTarget } from "./installation.js";
 
 export const ELECTRON_STANDALONE_HOST_CONFIG_ENV = "OD_ELECTRON_STANDALONE_HOST_V1";
 
@@ -84,20 +82,14 @@ function readConfig(): HostConfig {
   return Object.freeze({ schemaVersion: 1, scope: Object.freeze({ ...value.scope }), storeRoot, runtimeRoot, resourceRoot, hostPath, hostSha256: value.hostSha256!, layout, supervisorPath, supervisorSha256: value.supervisorSha256!, shell: Object.freeze({ ...shell }), channelHeadUrl: channelHeadUrl.href });
 }
 
-function createHostRuntime(config: HostConfig, installation: ResolvedElectronStandaloneInstallation): StandaloneHostRuntime {
+function createHostRuntime(config: HostConfig): StandaloneHostRuntime {
   const lifecycle = new StandaloneHostLifecycle(config.scope, {
     statePort: new StandaloneHostLifecycleLedger(config.storeRoot, config.scope),
   });
-  const ledger = new ElectronStandaloneShellUpdaterLedger(config.storeRoot, config.scope, "electron");
-  const feed = new ElectronReleaseExactFeed({
-    cacheRoot: config.storeRoot, channel: config.scope.channel, channelHeadUrl: config.channelHeadUrl,
-    currentReleaseVersion: installation.declaration.releaseVersion, shell: config.shell,
-    target: installation.declaration.target, trustedKeys: installation.trustedKeys,
-  });
-  const updater = new ElectronStandaloneHostUpdater("electron", lifecycle, ledger, {
-    authorityRoot: config.storeRoot, feed, candidates: new ElectronStandaloneShellCandidateLedger(config.storeRoot, config.scope, feed),
-  });
-  return new StandaloneHostRuntime({
+  const updater = new StandaloneHostControlUpdater("electron", config.scope, createStandaloneHostControlTransport({
+    ...config.scope, source: "standalone", mode: "runtime", app: "electron-updater",
+  }));
+  const runtime: StandaloneHostRuntime = new StandaloneHostRuntime({
     scope: config.scope, lifecycle,
     updater: (shellType) => shellType === updater.shellType ? updater : undefined,
     capabilities: () => createStandaloneShellCapabilityRouter([
@@ -112,12 +104,13 @@ function createHostRuntime(config: HostConfig, installation: ResolvedElectronSta
       return resolveStandaloneGenerationHandoff(await import(pathToFileURL(binding.launcher.path).href));
     },
   });
+  return runtime;
 }
 
 export async function runElectronStandaloneHost(): Promise<void> {
   const config = readConfig();
   const target = resolveElectronStandaloneTarget();
-  const installation = await loadElectronStandaloneInstallation({ resourceRoot: config.resourceRoot, channel: config.scope.channel, target });
+  await loadElectronStandaloneInstallation({ resourceRoot: config.resourceRoot, channel: config.scope.channel, target });
   const stamp = Object.freeze({ ...readCurrentSidecarStamp() });
   if (stamp.channel !== config.scope.channel || stamp.namespace !== config.scope.namespace || stamp.source !== "standalone" || stamp.mode !== "runtime" || stamp.app !== "standalone") {
     throw new Error("Standalone host configuration differs from its Sidecar stamp");
@@ -142,7 +135,7 @@ export async function runElectronStandaloneHost(): Promise<void> {
     lifecycle: {
       async start(sidecarResources) {
         if (resolve(sidecarResources.dataRoot ?? "") !== config.storeRoot || resolve(sidecarResources.runtimeRoot) !== config.runtimeRoot) throw new Error("Standalone host resources differ from its launch contract");
-        runtime = createHostRuntime(config, installation);
+        runtime = createHostRuntime(config);
         return runtime;
       },
       async status(active) {

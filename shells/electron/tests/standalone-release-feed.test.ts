@@ -13,7 +13,6 @@ import {
 } from "@open-design/standalone";
 
 import { ElectronReleaseExactFeed, resolveElectronChannelHeadOverride } from "@/adapters/standalone/release-feed.js";
-import { StandaloneHostLifecycle } from "@open-design/standalone";
 import { ElectronStandaloneHostUpdater } from "@/adapters/standalone/host-updater.js";
 import { ElectronStandaloneShellCandidateLedger } from "@/adapters/standalone/shell-updater-candidate.js";
 import { ElectronStandaloneShellUpdaterLedger } from "@/adapters/standalone/shell-updater-ledger.js";
@@ -109,10 +108,11 @@ describe("Electron release-exact feed", () => {
     const scope = { channel: "betahyx", namespace: "release-feed" };
     const ledger = new ElectronStandaloneShellUpdaterLedger(cacheRoot, scope, "electron");
     const candidates = new ElectronStandaloneShellCandidateLedger(cacheRoot, scope, feed);
-    const firstHost = new ElectronStandaloneHostUpdater("electron", new StandaloneHostLifecycle(scope), ledger, { authorityRoot: cacheRoot, feed, candidates });
+    const lifecycle = { async beginTransition(): Promise<never> { throw new Error("check/download must not reserve a host transition"); } };
+    const firstHost = new ElectronStandaloneHostUpdater("electron", lifecycle, ledger, { authorityRoot: cacheRoot, feed, candidates });
     expect(await firstHost.invoke("check")).toMatchObject({ outcome: "accepted", snapshot: { state: "available", candidateId: "0.2.0-betahyx.2" } });
 
-    const replacementHost = new ElectronStandaloneHostUpdater("electron", new StandaloneHostLifecycle(scope), ledger, { authorityRoot: cacheRoot, feed, candidates });
+    const replacementHost = new ElectronStandaloneHostUpdater("electron", lifecycle, ledger, { authorityRoot: cacheRoot, feed, candidates });
     const downloaded = await replacementHost.invoke("download");
     expect(downloaded).toMatchObject({
       outcome: "accepted",

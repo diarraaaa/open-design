@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { ELECTRON_UPDATER_PROVIDER_CONFIG_ENV, parseElectronUpdaterProviderConfig } from "./updater-provider.js";
 
 import {
   convergeSidecarLaunch,
@@ -265,6 +266,23 @@ export function createElectronStandaloneAuthorityFactory(
       const launchHost = async (nextBinding: StandaloneGenerationBinding) => {
         const resourceSet = bindElectronPhysicalResourceSet(resources, nextBinding);
         const stamp = resourceSet.resources.find(({ id }) => id === runtimeResource.id)!.stamp;
+        const providerStamp = resourceSet.resources.find(({ id }) => id === "electron-updater")?.stamp;
+        if (providerStamp == null) throw new Error("Electron resource set lacks its updater provider");
+        const providerConfig = parseElectronUpdaterProviderConfig({
+          schemaVersion: 1, scope: request.scope, shell: request.shell, resourceRoot: resolve(resourceRoot), storeRoot,
+          runtimeRoot: join(runtimeRoot, "electron-updater"), channelHeadUrl,
+        });
+        const provider = await convergeSidecarLaunch({
+          args: [installation.updaterProviderPath], command: officialNodeExecutablePath, cwd: resourceRoot,
+          env: { ...process.env, [ELECTRON_UPDATER_PROVIDER_CONFIG_ENV]: JSON.stringify(providerConfig) },
+          resources: { dataRoot: storeRoot, ownerPid: null, port: 0, runtimeRoot: providerConfig.runtimeRoot }, stamp: providerStamp,
+        });
+        const providerStatus = await getSidecarStatus(providerStamp, { generationPid: provider.description.resources.pid });
+        if (canonicalJson(providerStatus) !== canonicalJson({
+          control: "ready", providerSha256: installation.declaration.updaterProvider.sha256,
+          supervisorSha256: installation.declaration.supervisor.sha256, resourceRoot: resolve(resourceRoot),
+          dataRoot: storeRoot, runtimeRoot: providerConfig.runtimeRoot, shell: request.shell,
+        })) throw new Error("Electron updater provider escaped its installed launch contract");
         const converged = await convergeSidecarLaunch({
           args: [installation.hostPath],
           command: officialNodeExecutablePath,

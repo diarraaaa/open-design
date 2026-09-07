@@ -11,6 +11,7 @@ export async function buildElectronStandaloneAuthority(outputRoot: string) {
   const root = resolve(outputRoot);
   await mkdir(root, { recursive: true });
   const hostPath = resolve(root, "standalone-host.mjs");
+  const updaterProviderPath = resolve(root, "electron-updater.mjs");
   const supervisorPath = resolve(root, "supervisor.mjs");
   const shared = {
     bundle: true,
@@ -19,6 +20,7 @@ export async function buildElectronStandaloneAuthority(outputRoot: string) {
     target: "node24",
   } satisfies BuildOptions;
   await Promise.all([
+    build({ ...shared, entryPoints: [fileURLToPath(new URL("../src/adapters/standalone/updater-provider.ts", import.meta.url))], outfile: updaterProviderPath }),
     build({
       ...shared,
       entryPoints: [fileURLToPath(new URL("../src/adapters/standalone/host.ts", import.meta.url))],
@@ -34,6 +36,7 @@ export async function buildElectronStandaloneAuthority(outputRoot: string) {
   ]);
   return Object.freeze({
     host: Object.freeze({ name: "standalone-host.mjs", path: hostPath }),
+    updaterProvider: Object.freeze({ name: "electron-updater.mjs", path: updaterProviderPath }),
     supervisor: Object.freeze({ name: "supervisor.mjs", path: supervisorPath }),
   });
 }
@@ -65,10 +68,11 @@ export async function loadElectronStandaloneAuthorityResources(resourceRoot: str
   const root = resolve(resourceRoot);
   const installationPath = join(root, "standalone-installation.json");
   const installation = JSON.parse(await readFile(installationPath, "utf8")) as Record<string, unknown>;
-  if (installation.schemaVersion !== 1 || !Array.isArray(installation.seeds) || installation.seeds.length === 0) throw new Error("Electron Standalone installation declaration is invalid");
+  if (installation.schemaVersion !== 2 || !Array.isArray(installation.seeds) || installation.seeds.length === 0) throw new Error("Electron Standalone installation declaration is invalid");
   const resources = [
     Object.freeze({ name: "standalone-installation.json", path: installationPath }),
     await verifiedResource(root, installation.host, "host"),
+    await verifiedResource(root, installation.updaterProvider, "updater provider"),
     await verifiedResource(root, installation.supervisor, "supervisor"),
     await verifiedResource(root, installation.content, "content"),
     await verifiedResource(root, installation.trust, "trust"),

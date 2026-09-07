@@ -60,3 +60,25 @@ export class StandaloneHostControlUpdater implements StandaloneShellUpdaterPort 
     return actionResult(await this.#request({ schemaVersion: STANDALONE_HOST_CONTROL_SCHEMA_VERSION, operation: "updater.confirm-installed", scope: this.scope, shellType: this.shellType, proof }), this.shellType);
   }
 }
+
+/** Serve only the finite updater surface; a provider never owns host lifecycle. */
+export function createStandaloneHostUpdaterHandler(
+  scope: LifecycleScope,
+  provider: StandaloneShellUpdaterPort,
+): StandaloneHostControlTransport {
+  const boundScope = Object.freeze({ ...scope });
+  validateStandaloneHostControlRequest({ schemaVersion: 1, operation: "updater.read", scope: boundScope, shellType: provider.shellType }, boundScope);
+  return async (input) => {
+    const request = validateStandaloneHostControlRequest(input, boundScope);
+    if (!("shellType" in request) || request.shellType !== provider.shellType) {
+      throw new Error("Standalone updater provider does not serve this operation or Shell type");
+    }
+    switch (request.operation) {
+      case "updater.read": return snapshot(await provider.readSnapshot(), provider.shellType);
+      case "updater.wait": return snapshot(await provider.waitForChange(request.afterRevision, request.timeoutMs), provider.shellType);
+      case "updater.invoke": return actionResult(await provider.invoke(request.action), provider.shellType);
+      case "updater.confirm-installed": return actionResult(await provider.confirmInstalled(request.proof), provider.shellType);
+      default: throw new Error("Standalone updater provider operation is unsupported");
+    }
+  };
+}

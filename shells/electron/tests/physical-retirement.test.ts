@@ -42,7 +42,7 @@ it("retires real orphaned Closure resources without touching another namespace",
       await vi.waitFor(async () => expect(await getSidecarStatus(stamp)).toEqual({ ready: true }), { timeout: 5_000, interval: 25 });
     }
     const certificate = await withElectronPhysicalResourceSetGuard(resourceSet, (guard) => guard.retire());
-    expect(certificate.resources).toHaveLength(3);
+    expect(certificate.resources).toHaveLength(4);
     for (const { id, result, stamp } of certificate.resources) {
       expect(result.remainingPids).toEqual([]);
       if (id !== "standalone-runtime") expect(result.stoppedPids.length).toBeGreaterThan(0);

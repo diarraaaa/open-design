@@ -155,11 +155,12 @@ export async function materializeElectronDevInstallation(requestInput: ElectronD
     const authority = await buildElectronStandaloneAuthority(stage);
     await Promise.all([download(bootstrap.content, stage), download(bootstrap.trust, stage), ...bootstrap.seeds.map((seed) => download(seed, stage))]);
     const installation = Object.freeze({
-      schemaVersion: 1,
+      schemaVersion: 2,
       channel: bootstrap.channel,
       releaseVersion: bootstrap.releaseVersion,
       target: request.target,
       host: await descriptor(authority.host.path, authority.host.name),
+      updaterProvider: await descriptor(authority.updaterProvider.path, authority.updaterProvider.name),
       supervisor: await descriptor(authority.supervisor.path, authority.supervisor.name),
       content: await descriptor(join(stage, bootstrap.content.file)),
       trust: await descriptor(join(stage, bootstrap.trust.file)),

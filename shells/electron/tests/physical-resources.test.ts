@@ -52,6 +52,7 @@ describe("Electron physical resource set", () => {
         declaration.resources[0],
         { id: "closure-daemon", stamp: { app: "daemon", mode: "runtime", source: "standalone" } },
         { id: "closure-web", stamp: { app: "web", mode: "runtime", source: "standalone" } },
+        { id: "electron-updater", stamp: { app: "electron-updater", mode: "runtime", source: "standalone" } },
       ],
     });
   });

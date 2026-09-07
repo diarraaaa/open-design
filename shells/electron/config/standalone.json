@@ -24,6 +24,10 @@
         "mode": "runtime",
         "app": "web"
       }
+    },
+    {
+      "id": "electron-updater",
+      "stamp": { "source": "standalone", "mode": "runtime", "app": "electron-updater" }
     }
   ]
 }

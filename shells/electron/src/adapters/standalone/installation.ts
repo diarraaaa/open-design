@@ -8,7 +8,7 @@ import {
   type StandaloneBlobCandidate,
 } from "@open-design/standalone";
 
-export const ELECTRON_STANDALONE_INSTALLATION_SCHEMA_VERSION = 1 as const;
+export const ELECTRON_STANDALONE_INSTALLATION_SCHEMA_VERSION = 2 as const;
 export const ELECTRON_STANDALONE_TRUST_SCHEMA_VERSION = 1 as const;
 export const ELECTRON_STANDALONE_INSTALLATION_FILE = "standalone-installation.json";
 
@@ -26,6 +26,7 @@ export type ElectronStandaloneInstallation = Readonly<{
   releaseVersion: string;
   target: ElectronStandaloneTarget;
   host: InstalledFile;
+  updaterProvider: InstalledFile;
   supervisor: InstalledFile;
   content: InstalledFile;
   trust: InstalledFile;
@@ -38,6 +39,7 @@ export type ResolvedElectronStandaloneInstallation = Readonly<{
   envelope: SignedStandaloneMetadata;
   trustedKeys: ReadonlyMap<string, KeyObject>;
   hostPath: string;
+  updaterProviderPath: string;
   supervisorPath: string;
   candidates: Readonly<Record<string, readonly StandaloneBlobCandidate[]>>;
 }>;
@@ -91,7 +93,7 @@ function channelHeadUrl(value: unknown): string {
 
 export function validateElectronStandaloneInstallation(value: unknown): ElectronStandaloneInstallation {
   const candidate = record(value, "Electron Standalone installation");
-  exactKeys(candidate, ["channel", "content", "host", "releaseVersion", "schemaVersion", "seeds", "supervisor", "target", "trust", "update"], "Electron Standalone installation");
+  exactKeys(candidate, ["channel", "content", "host", "releaseVersion", "schemaVersion", "seeds", "supervisor", "target", "trust", "update", "updaterProvider"], "Electron Standalone installation");
   if (candidate.schemaVersion !== ELECTRON_STANDALONE_INSTALLATION_SCHEMA_VERSION) throw new Error("unsupported Electron Standalone installation schema");
   if (typeof candidate.channel !== "string") throw new Error("Electron Standalone installation channel must be a string");
   if (typeof candidate.releaseVersion !== "string") throw new Error("Electron Standalone installation releaseVersion must be a string");
@@ -106,6 +108,7 @@ export function validateElectronStandaloneInstallation(value: unknown): Electron
     return file;
   };
   const host = reserve(installedFile(candidate.host, "Electron Standalone host"), "Electron Standalone host");
+  const updaterProvider = reserve(installedFile(candidate.updaterProvider, "Electron updater provider"), "Electron updater provider");
   const supervisor = reserve(installedFile(candidate.supervisor, "Electron Standalone supervisor"), "Electron Standalone supervisor");
   if (supervisor.file !== "supervisor.mjs") throw new Error("Electron Standalone supervisor must retain Sidecar's fixed module name");
   const content = reserve(installedFile(candidate.content, "Electron Standalone content"), "Electron Standalone content");
@@ -128,6 +131,7 @@ export function validateElectronStandaloneInstallation(value: unknown): Electron
     releaseVersion: candidate.releaseVersion,
     target: candidate.target as ElectronStandaloneTarget,
     host,
+    updaterProvider,
     supervisor,
     content,
     trust,
@@ -196,6 +200,7 @@ export async function loadElectronStandaloneInstallation(input: Readonly<{
     Promise.all(declaration.seeds.map((seed, index) => verifiedInstalledBytes(input.resourceRoot, seed, `Electron Standalone seed ${index}`))),
   ]);
   void hostBytes;
+  await verifiedInstalledBytes(input.resourceRoot, declaration.updaterProvider, "Electron updater provider");
   void supervisorBytes;
   const trustedKeys = parseTrust(trustBytes);
   const envelope = parseJson(contentBytes, "Electron Standalone content") as SignedStandaloneMetadata;
@@ -218,6 +223,7 @@ export async function loadElectronStandaloneInstallation(input: Readonly<{
   }));
   return Object.freeze({
     declaration,
+    updaterProviderPath: join(input.resourceRoot, declaration.updaterProvider.file),
     envelope,
     trustedKeys,
     hostPath: join(input.resourceRoot, declaration.host.file),
