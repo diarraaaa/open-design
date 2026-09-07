@@ -103,6 +103,8 @@ try {
   Compress-Archive -LiteralPath $root -DestinationPath $archive
   $receiptValue = [ordered]@{ archive = [ordered]@{ file = [IO.Path]::GetFullPath($archive); mediaType = "application/zip"; sha256 = Digest $archive; size = Size $archive }; manifestSha256 = $manifestSha; operation = "terminal.distribution.build"; schemaVersion = 1; target = $Target }
   [IO.File]::WriteAllText($Receipt, (($receiptValue | ConvertTo-Json -Compress -Depth 5) + "`n"), [Text.UTF8Encoding]::new($false))
+  $contribution = [ordered]@{ artifact = $receiptValue.archive; operation = "shell.distribution.contribute"; schemaVersion = 1; shell = $manifest.shell; target = $Target }
+  [IO.File]::WriteAllText((Join-Path $Output "shell-contribution.json"), (($contribution | ConvertTo-Json -Compress -Depth 5) + "`n"), [Text.UTF8Encoding]::new($false))
 } finally {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 }

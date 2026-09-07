@@ -100,3 +100,5 @@ COPYFILE_DISABLE=1 tar -czf "$archive" -C "$stage" nexu-terminal
 archive_sha=$(sha256_file "$archive")
 printf '{"archive":{"file":"%s","mediaType":"application/gzip","sha256":"%s","size":%s},"manifestSha256":"%s","operation":"terminal.distribution.build","schemaVersion":1,"target":"%s"}\n' \
   "$(json_escape "$archive")" "$archive_sha" "$(file_size "$archive")" "$manifest_sha" "$target" > "$receipt"
+printf '{"artifact":{"file":"%s","mediaType":"application/gzip","sha256":"%s","size":%s},"operation":"shell.distribution.contribute","schemaVersion":1,"shell":{"buildHash":"%s","type":"terminal","version":"%s"},"target":"%s"}\n' \
+  "$(json_escape "$archive")" "$archive_sha" "$(file_size "$archive")" "$shell_build_hash" "$shell_version" "$target" > "$output/shell-contribution.json"

@@ -222,8 +222,12 @@ async function finalize(request: JsonObject, receiptPath: string): Promise<void>
     const path = await checkedFile(contribution.artifact, `${key} distribution`, descriptor.archiveFile);
     const mediaType = String(contribution.artifact.mediaType ?? "application/octet-stream"), artifact = await describeFile(path, mediaType);
     artifacts.push(artifact);
-    if (contribution.updater?.protocol !== "standalone-shell-updater-v3") throw new Error(`Shell contribution lacks updater contract: ${key}`);
+    if (contribution.updater != null && (contribution.updater.protocol !== "standalone-shell-updater-v3"
+      || contribution.updater.interaction !== "restart-and-install" || typeof contribution.updater.handler !== "string" || !IDENTIFIER.test(contribution.updater.handler))) {
+      throw new Error(`Shell contribution has an invalid updater contract: ${key}`);
+    }
     if (shellType === "electron") {
+      if (contribution.updater == null) throw new Error(`Electron Shell contribution lacks updater contract: ${key}`);
       const identity = contribution.installIdentity;
       if (identity == null || typeof identity !== "object" || Array.isArray(identity)
         || ["appId", "executableName", "namespace", "productName"].some((field) => typeof identity[field] !== "string" || identity[field].length === 0)) {
@@ -242,7 +246,7 @@ async function finalize(request: JsonObject, receiptPath: string): Promise<void>
       ...(contribution.installIdentity == null ? {} : { installIdentity: contribution.installIdentity }),
       ...(contribution.platformTrust == null ? {} : { platformTrust: contribution.platformTrust }),
       artifact: { url: publicObjectUrl(String(prepared.artifactBaseUrl), path), sha256: artifact.sha256, size: artifact.size, mediaType },
-      updater: contribution.updater,
+      ...(contribution.updater == null ? {} : { updater: contribution.updater }),
     });
   }
   if (seen.size !== expected.size || [...expected].some((key) => !seen.has(key))) throw new Error("Shell contributions do not cover prepared topology");
@@ -268,7 +272,7 @@ async function finalize(request: JsonObject, receiptPath: string): Promise<void>
       ...(value.platformTrust == null ? {} : { platformTrust: value.platformTrust }),
       artifact: value.artifact,
       shellMetadata: { url: lanes[shellType].url, sha256: description.sha256, size: description.size },
-      updater: value.updater,
+      ...(value.updater == null ? {} : { updater: value.updater }),
     });
   }
   const headFile = join(documents, "channel-head.json");

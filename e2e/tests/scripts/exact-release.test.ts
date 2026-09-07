@@ -119,6 +119,10 @@ describe("exact Electron release topology", () => {
     expect(workflow).not.toContain("somepreview");
     expect(workflow).not.toContain('"appId": "io.open-design.betahyx"');
     expect(workflow).not.toContain('"executableName": "open-design-betahyx"');
+    const finalize = workflow.split("- name: Finalize signed Shell sidecar and channel head")[1]?.split("- name: Publish immutable release objects")[0];
+    expect(finalize).toContain("contribution = json.loads(contribution_file.read_text())");
+    expect(finalize).not.toContain("restart-and-install");
+    expect(finalize).not.toContain("shell.distribution.contribute");
   });
 
   it("contains no legacy Electron application or launcher authority", async () => {

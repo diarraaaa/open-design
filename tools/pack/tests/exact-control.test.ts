@@ -13,7 +13,7 @@ afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => awai
 const digest = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
 
 describe("exact release control", () => {
-  it("promotes Closure resources into signed content instead of fixture-only metadata", async () => {
+  it.each(["electron", "terminal"])("signs %s contributions with real resource and optional updater capabilities", async (shellType) => {
     const root = await mkdtemp(join(tmpdir(), "exact-control-resource-"));
     roots.push(root);
     const scene = join(root, "scene"), output = join(root, "prepared");
@@ -61,9 +61,36 @@ describe("exact release control", () => {
         closureArtifactFile: closure,
         standaloneArtifactFile: launcher,
         resourceReceiptFile: join(scene, "closure-resources.json"),
-        shells: [{ type: "electron", version: "0.1.0", scenes: [{ target: "darwin-arm64", sceneDirectory: scene, sceneManifestSha256: digest(await readFile(manifestPath)) }] }],
+        shells: [{ type: shellType, version: "0.1.0", scenes: [{ target: "darwin-arm64", sceneDirectory: scene, sceneManifestSha256: digest(await readFile(manifestPath)) }] }],
         outputDirectory: output,
       }, join(output, "prepare-receipt.json"));
+      const prepared = JSON.parse(await readFile(join(output, "prepare-receipt.json"), "utf8"));
+      const contributionFile = join(root, "contribution.json"), finalDirectory = join(root, "final");
+      const contribution = {
+        schemaVersion: 1, operation: "shell.distribution.contribute", target: "darwin-arm64",
+        shell: { type: shellType, version: "0.1.0", buildHash: "a".repeat(64) },
+        artifact: { file: resource, sha256: digest(await readFile(resource)), size: (await readFile(resource)).byteLength, mediaType: "application/zip" },
+        ...(shellType !== "electron" ? {} : {
+          installIdentity: { appId: "test.app", executableName: "test", namespace: "test", productName: "test" },
+          platformTrust: { platform: "macos", mode: "verify-only", designatedRequirement: "test", teamIdentifier: "adhoc" },
+        }),
+      };
+      const finalize = () => executeExactPackControl({ schemaVersion: 1, operation: "exact.finalize", prepareReceipt: join(output, "prepare-receipt.json"),
+        contentMetadataFile: prepared.contentMetadata.file, closureArtifactFile: prepared.closureArtifact.file, standaloneArtifactFile: prepared.standaloneArtifact.file,
+        contributions: [{ receipt: contributionFile, archiveFile: resource }], outputDirectory: finalDirectory,
+      }, join(finalDirectory, "pack-receipt.json"));
+      await writeFile(contributionFile, JSON.stringify({ ...contribution, updater: { protocol: "wrong" } }));
+      await expect(finalize()).rejects.toThrow("invalid updater contract");
+      await writeFile(contributionFile, JSON.stringify(contribution));
+      if (shellType === "electron") {
+        await expect(finalize()).rejects.toThrow("lacks updater contract");
+        await writeFile(contributionFile, JSON.stringify({ ...contribution, updater: { protocol: "standalone-shell-updater-v3", handler: "sidecar-v1", interaction: "restart-and-install" } }));
+      }
+      await finalize();
+      const metadata = JSON.parse(await readFile(join(finalDirectory, `documents/${shellType}-metadata.json`), "utf8"));
+      const finalized = JSON.parse(await readFile(join(finalDirectory, "pack-receipt.json"), "utf8"));
+      expect(metadata.document.distributions[0].updater == null).toBe(shellType === "terminal");
+      expect(finalized.requiredAcceptances[0].updater == null).toBe(shellType === "terminal");
     } finally {
       if (previous.key == null) delete process.env.OD_EXACT_ED25519_PRIVATE_KEY; else process.env.OD_EXACT_ED25519_PRIVATE_KEY = previous.key;
       if (previous.keyId == null) delete process.env.OD_EXACT_SIGNING_KEY_ID; else process.env.OD_EXACT_SIGNING_KEY_ID = previous.keyId;

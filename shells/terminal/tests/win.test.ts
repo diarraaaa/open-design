@@ -32,6 +32,9 @@ describe("Terminal Windows carrier", () => {
       powershell(join(terminalRoot, "ps1/distribution.ps1"), ["-Request", distributionRequest, "-Receipt", distributionReceipt]);
       const distribution = join(directories.output, `nexu-terminal-${target}-0.1.0-somechan.1.zip`);
       expect(JSON.parse(readFileSync(distributionReceipt, "utf8"))).toMatchObject({ operation: "terminal.distribution.build", target, archive: { file: distribution } });
+      const contribution = JSON.parse(readFileSync(join(directories.output, "shell-contribution.json"), "utf8"));
+      expect(contribution).toMatchObject({ operation: "shell.distribution.contribute", shell: { type: "terminal", buildHash: expectedShellBuildHash(scene, target, locked.sha256) }, target, artifact: { file: distribution } });
+      expect(contribution).not.toHaveProperty("updater");
       run("powershell.exe", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1]", distribution, directories.unpacked]);
       const root = join(directories.unpacked, "nexu-terminal");
       const terminal = (installRoot: string, storeRoot: string, channel: string, namespace: string, operation: string, options: TerminalOptions = {}) => {

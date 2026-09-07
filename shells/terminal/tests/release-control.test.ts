@@ -52,7 +52,6 @@ describe("exact phased release control", () => {
     const artifact = { url: "https://releases.invalid/terminal.tar.gz", sha256: "a".repeat(64), size: 1 };
     const shellMetadata = { url: "https://releases.invalid/terminal.json", sha256: "c".repeat(64), size: 1 };
     await mkdir(join(root, "published"));
-    const updater = { protocol: "standalone-shell-updater-v3", handler: "sidecar-v1", interaction: "restart-and-install" };
     const policyRequest = join(root, "policy-request.json");
     const policyReceipt = join(root, "policy.json");
     await writeFile(policyRequest, JSON.stringify({
@@ -68,7 +67,7 @@ describe("exact phased release control", () => {
     await writeFile(publishReceipt, JSON.stringify({
       schemaVersion: 1, operation: "exact.publish", profile: policy.profile, channel: policy.channel,
       releaseVersion: policy.releaseVersion, sourceCommit: policy.sourceCommit, target: policy.target,
-      requiredAcceptances: [{ shell, target: "darwin-arm64", artifact, shellMetadata, updater }],
+      requiredAcceptances: [{ shell, target: "darwin-arm64", artifact, shellMetadata }],
     }));
     await writeFile(join(root, "installed-proof.json"), JSON.stringify({ outcome: "ready", operation: "probe", shell: { type: "terminal", version: "0.1.0", digest: "e".repeat(64) }, result: {} }));
     const manifest = JSON.stringify({ schemaVersion: 1, shell, target: "darwin-arm64" });
@@ -157,7 +156,6 @@ describe("exact phased release control", () => {
       shell: { type: "terminal", version: "0.1.0", buildHash: shellBuildHash },
       target: "darwin-arm64",
       artifact: { ...await describeFile(archive), mediaType: "application/gzip" },
-      updater: { protocol: "standalone-shell-updater-v3", handler: "sidecar-v1", interaction: "restart-and-install" },
     }));
     const finalizeRequest = join(root, "finalize.json");
     await writeFile(finalizeRequest, JSON.stringify({
@@ -240,7 +238,6 @@ describe("exact phased release control", () => {
         describeFile(archive), describeFile(content), describeFile(terminal), describeFile(head),
       ]);
       const shell = { type: "terminal", version: "0.1.0", buildHash: "b".repeat(64) };
-      const updater = { protocol: "standalone-shell-updater-v3", handler: "sidecar-v1", interaction: "restart-and-install" };
       const pack = join(root, "pack.json");
       await writeFile(pack, JSON.stringify({
         schemaVersion: 2,
@@ -257,7 +254,6 @@ describe("exact phased release control", () => {
           target: "darwin-arm64",
           artifact: { url: "https://unpublished.invalid/terminal-darwin-arm64.tar.gz", sha256: artifact.sha256, size: artifact.size },
           shellMetadata: { url: "https://unpublished.invalid/terminal-metadata.json", sha256: terminalDocument.sha256, size: terminalDocument.size },
-          updater,
         }],
       }));
       const policyRequest = join(root, "policy-request.json");
@@ -311,7 +307,6 @@ describe("exact phased release control", () => {
         target: required.target,
         artifact: required.artifact,
         shellMetadata: required.shellMetadata,
-        updater: required.updater,
         installed: { shell: required.shell, target: required.target },
       }));
       const activateRequest = join(root, "activate-request.json");

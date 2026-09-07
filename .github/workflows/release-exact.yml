@@ -698,26 +698,12 @@ jobs:
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"])
           prepared = json.loads((root / "prepared" / "prepare-receipt.json").read_text())
-          shells = {shell["type"]: shell for shell in prepared["shells"]}
           contributions = []
           for item in json.loads(os.environ["SHELL_MATRIX"])["include"]:
               shell_type, target = item["shell"], item["target"]
               directory = root / "distributions" / f"exact-distribution-{shell_type}-{target}-{os.environ['RELEASE_VERSION']}"
               contribution_file = directory / "shell-contribution.json"
-              if shell_type == "terminal":
-                  receipt = json.loads((directory / "distribution-receipt.json").read_text())
-                  scene = next(scene for scene in shells[shell_type]["scenes"] if scene["target"] == target)
-                  contribution = {
-                      "schemaVersion": 1, "operation": "shell.distribution.contribute",
-                      "shell": {"type": shell_type, "version": shells[shell_type]["version"], "buildHash": scene["shellBuildHash"]},
-                      "target": target, "artifact": receipt["archive"],
-                      "updater": {"protocol": "standalone-shell-updater-v3", "handler": "sidecar-v1", "interaction": "restart-and-install"},
-                  }
-                  contribution_file.write_text(json.dumps(contribution, sort_keys=True, separators=(",", ":")) + "\n")
-              elif shell_type == "electron":
-                  contribution = json.loads(contribution_file.read_text())
-              else:
-                  raise SystemExit(f"unsupported exact Shell: {shell_type}")
+              contribution = json.loads(contribution_file.read_text())
               archive_file = directory / Path(contribution["artifact"]["file"]).name
               contributions.append({"receipt": str(contribution_file), "archiveFile": str(archive_file)})
           request = {
