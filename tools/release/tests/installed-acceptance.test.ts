@@ -108,6 +108,45 @@ it("rejects hot receipts that omit both Shell versions instead of treating undef
   await expect(executeExactReleaseControl({ ...f.input, hotAcceptanceReceipt }, f.output)).rejects.toThrow("isolated Closure hot update");
 });
 
+it("requires a mounted hot renderer followed by a separate cold start of the same generation", async () => {
+  const f = await fixture();
+  const id = "e".repeat(64), bindingDigest = "f".repeat(64);
+  const hotAcceptanceReceipt = await f.save("hot.json", {
+    schemaVersion: 1, operation: "electron.cdp.contract.invoked", discoveryUrl: "http://127.0.0.1:9222",
+    results: [
+      { lines: { shell: { currentVersion: "1.2.3" } } },
+      { lines: { closure: { state: "ready", candidateVersion: f.published.releaseVersion } } },
+      { outcome: "context-destroyed" },
+      { lines: { shell: { currentVersion: "1.2.3" } } },
+    ],
+  });
+  const standaloneState = await f.save("state.json", { schemaVersion: 4, active: id, lastHealthy: id });
+  await f.save(`${id}.json`, { schemaVersion: 4, id, channel: f.published.channel, releaseVersion: f.published.releaseVersion });
+  const input = { ...f.input, hotAcceptanceReceipt, standaloneState, standaloneGenerationsRoot: f.root };
+  const hot = [
+    { attemptId: "hot", event: "startup.committed" },
+    { attemptId: "hot", event: "renderer.generation.committed", details: { generationId: id, bindingDigest } },
+    { attemptId: "hot", event: "shutdown.complete" },
+  ];
+  const cold = [
+    { attemptId: "cold", event: "startup.committed", details: { generationId: id } },
+    { attemptId: "cold", event: "shutdown.complete" },
+  ];
+  await f.log([...hot, ...cold]);
+  await executeExactReleaseControl(input, f.output);
+  expect(JSON.parse(await readFile(f.output, "utf8")).installed.proof.hotUpdate).toMatchObject({ rendererAttemptId: "hot", rendererBindingDigest: bindingDigest, coldAttemptId: "cold" });
+  for (const invalid of [
+    [...hot.filter((event) => event.event !== "renderer.generation.committed"), ...cold],
+    hot,
+    [...hot, { attemptId: "hot", event: "renderer.generation.failed" }, ...cold],
+    [...hot, ...cold.map((event) => ({ ...event, details: { generationId: "a".repeat(64) } }))],
+    [...cold, ...hot],
+  ]) {
+    await f.log(invalid);
+    await expect(executeExactReleaseControl(input, f.output)).rejects.toThrow("mounted candidate renderer");
+  }
+});
+
 it("preserves Terminal installed lifecycle evidence and rejects a surviving Sidecar", async () => {
   const f = await fixture();
   const required = { ...f.published.requiredAcceptances[0]!, shell: { type: "terminal", version: "1.2.3", buildHash: "b".repeat(64) } };

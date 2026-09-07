@@ -20,6 +20,8 @@ import {
   type ElectronShellManifest,
   type ElectronStandaloneAuthority,
   type ElectronStandalonePreparedRuntime,
+  type ElectronStandaloneContentUpdaterPort,
+  type ElectronStandaloneContentUpdateApplication,
 } from "../contracts/index.js";
 export type {
   ElectronInstallerClaimIdentity,
@@ -61,9 +63,8 @@ import {
 import { focusElectronWindow, resolveElectronPresentationMode } from "./window/presentation.js";
 import {
   createElectronRendererMountAcknowledgement,
-  installElectronRendererMountBarrier,
-  serializeElectronRendererMountAcknowledgement,
 } from "./window/mount-acknowledgement.js";
+import { mountElectronRendererLease, replaceElectronRendererLease } from "./window/renderer-mount.js";
 
 import { electronSplashHtml } from "./window/splash.js";
 
@@ -207,6 +208,52 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
   let runtimeAcquisition: Promise<StandaloneRuntimeHandle> | null = null;
   let rendererMount: Promise<void> | null = null;
   let activationAcquisition: Promise<ElectronActivationAttempt> | null = null;
+  const rendererShutdown = new AbortController();
+  let rendererReplacement: Promise<ElectronStandaloneContentUpdateApplication> | null = null;
+  const mountRenderer = (binding: StandaloneGenerationBinding, signal: AbortSignal, attemptId: string) => mountElectronRendererLease({
+    context: {
+      acknowledgement: createElectronRendererMountAcknowledgement({ attemptId, bindingDigest: binding.digest }),
+      contentUpdater: rendererContentUpdater,
+      shellUpdater: requireWarmupState(preparedRuntime, "a prepared Standalone runtime").updater,
+      manifest, preflight, presentation,
+      runtime: Object.freeze({ attachment, binding, handle: requireWarmupState(runtimeHandle, "a Standalone runtime handle") }),
+    },
+    createWindow: (options) => new BrowserWindow(options),
+    ipc: ipcMain,
+    renderer: definition.renderer,
+    signal,
+  });
+  const rendererContentUpdater: ElectronStandaloneContentUpdaterPort = Object.freeze({
+    prepareLatest: (policy: Parameters<ElectronStandaloneContentUpdaterPort["prepareLatest"]>[0]) => requireWarmupState(preparedRuntime, "a prepared Standalone runtime").contentUpdater.prepareLatest(policy),
+    async applyNow(options: Parameters<ElectronStandaloneContentUpdaterPort["applyNow"]>[0]) {
+      if (context.startup?.phase !== "committed" || rendererShutdown.signal.aborted || rendererReplacement != null) {
+        throw new Error("Electron renderer is not available for a content update");
+      }
+      rendererReplacement = (async () => {
+        const applied = await requireWarmupState(preparedRuntime, "a prepared Standalone runtime").contentUpdater.applyNow(options);
+        if (applied.status === "blocked") return applied;
+        const timeoutMs = warmupTopology.nodes.find(({ executor }) => executor === ELECTRON_WARMUP_ATOMS.MOUNT_RENDERER)?.timeoutMs
+          ?? warmupTopology.totalTimeoutMs;
+        const signal = timeoutMs == null ? rendererShutdown.signal : AbortSignal.any([rendererShutdown.signal, AbortSignal.timeout(timeoutMs)]);
+        rendererLease = await replaceElectronRendererLease({
+          previous: requireWarmupState(rendererLease, "a renderer lease"),
+          mount: () => mountRenderer(applied.binding, signal, randomUUID()),
+          reveal: (lease) => { signal.throwIfAborted(); focusElectronWindow(lease.window, presentation, "initial-reveal"); },
+        });
+        generationBinding = applied.binding;
+        generation = applied.generation;
+        context.log?.write("renderer.generation.committed", { generationId: applied.generation.id, bindingDigest: applied.binding.digest });
+        return applied;
+      })();
+      try { return await rendererReplacement; }
+      catch (error) {
+        context.log?.write("renderer.generation.failed", { error });
+        // A retired product endpoint must never remain presented as usable.
+        app.quit();
+        throw error;
+      } finally { rendererReplacement = null; }
+    },
+  });
 
   context.startupQuit = installElectronStartupQuitBarrier({
     app,
@@ -370,55 +417,8 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
       },
       [ELECTRON_WARMUP_ATOMS.MOUNT_RENDERER]: async ({ signal }) => {
         rendererMount = (async () => {
-          const acknowledgement = createElectronRendererMountAcknowledgement(startupSignal!);
-          const rendererOptions = definition.renderer.windowOptions?.({ acknowledgement, manifest, preflight, presentation });
-          const window = new BrowserWindow({
-            ...rendererOptions,
-            width: manifest.window.width,
-            height: manifest.window.height,
-            title: manifest.window.title,
-            show: false,
-            webPreferences: {
-              ...rendererOptions?.webPreferences,
-              additionalArguments: [
-                ...(rendererOptions?.webPreferences?.additionalArguments ?? []),
-                serializeElectronRendererMountAcknowledgement(acknowledgement),
-              ],
-            },
-          });
-          const barrier = installElectronRendererMountBarrier({ acknowledgement, ipc: ipcMain, sender: window.webContents, signal });
-          let integration: Awaited<ReturnType<ElectronShellDefinition["renderer"]["mount"]>> | null = null;
-          try {
-            integration = await definition.renderer.mount({
-              acknowledgement,
-              contentUpdater: preparedRuntime!.contentUpdater,
-              shellUpdater: preparedRuntime!.updater,
-              manifest,
-              preflight,
-              presentation,
-              runtime: Object.freeze({ attachment, binding: generationBinding!, handle: runtimeHandle! }),
-              window,
-            });
-            await barrier.ready;
-            const mountedIntegration = integration;
-            rendererLease = Object.freeze({
-              window,
-              releaseIntegration() {
-                return mountedIntegration.dispose();
-              },
-              destroy() { if (!window.isDestroyed()) window.destroy(); },
-            });
-            context.startup!.advance(startupSignal!, "renderer-mounted");
-          } catch (error) {
-            if (!window.isDestroyed()) window.destroy();
-            try { await integration?.dispose(); }
-            catch (disposeError) {
-              throw new AggregateError([error, disposeError], "Electron renderer mount and integration cleanup failed");
-            }
-            throw error;
-          } finally {
-            barrier.dispose();
-          }
+          rendererLease = await mountRenderer(generationBinding!, signal, startupSignal!.attemptId);
+          context.startup!.advance(startupSignal!, "renderer-mounted");
         })();
         await rendererMount;
       },
@@ -473,10 +473,12 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
   const close = async () => {
     if (closing) return;
     closing = true;
+    rendererShutdown.abort(new Error("Electron renderer shutdown"));
+    await rendererReplacement?.catch(() => undefined);
     try {
       await completeElectronShutdown({
         waitForHeartbeat() { /* Runtime-handle authorities own their leases. */ },
-        async releaseRendererIntegration() { await runtimeRendererLease.releaseIntegration(); },
+        async releaseRendererIntegration() { await rendererLease?.releaseIntegration(); },
         async disposeWarmup() { await startupWarmup.dispose(); },
         async releaseStandalone() { await runtimeStandaloneHandle.close(); },
         async stopActivation() { await context.activation?.stop(); },
@@ -484,7 +486,7 @@ async function runElectronShellSession(definition: ElectronShellDefinition, cont
           context.log?.write(failures.length === 0 ? "shutdown.complete" : "shutdown.failed", { failures });
         },
         async flushObservation() { await context.log?.flush(); },
-        destroyWindow() { runtimeRendererLease.destroy(); },
+        destroyWindow() { rendererLease?.destroy(); },
       });
     } finally {
       processErrors.dispose();

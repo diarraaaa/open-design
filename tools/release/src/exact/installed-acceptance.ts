@@ -66,10 +66,25 @@ async function hotProof(input: JsonObject, published: JsonObject): Promise<JsonO
   const generation = await readObject(generationPath);
   if (generation.schemaVersion !== 4 || generation.id !== id || generation.channel !== published.channel
     || generation.releaseVersion !== published.releaseVersion) throw new Error("Electron hot acceptance did not activate the candidate Standalone generation");
+  const events = (await readFile(input.runtimeLog, "utf8")).replace(/^\uFEFF/u, "").split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as JsonObject);
+  const mounted = events.findLast((event) => event.event === "renderer.generation.committed" && event.details?.generationId === id);
+  const hotAttempt = mounted == null ? [] : events.filter((event) => event.attemptId === mounted.attemptId);
+  const mountedIndex = mounted == null ? -1 : hotAttempt.indexOf(mounted);
+  const hotStartup = hotAttempt.findIndex((event) => event.event === "startup.committed");
+  const hotShutdown = hotAttempt.findIndex((event) => event.event === "shutdown.complete");
+  const coldStartup = events.findLast((event) => event.event === "startup.committed");
+  if (mounted == null || !/^[a-f0-9]{64}$/u.test(mounted.details?.bindingDigest ?? "")
+    || hotStartup < 0 || mountedIndex <= hotStartup || hotShutdown <= mountedIndex
+    || hotAttempt.some((event) => ["renderer.generation.failed", "shutdown.failed", "startup.failed"].includes(event.event))
+    || coldStartup == null || coldStartup.attemptId === mounted.attemptId || coldStartup.details?.generationId !== id
+    || events.indexOf(coldStartup) <= events.indexOf(hotAttempt[hotShutdown]!)) {
+    throw new Error("Electron hot acceptance requires a mounted candidate renderer and a subsequent clean cold start");
+  }
   return {
     releaseVersion: published.releaseVersion, discoveryUrl: hot.discoveryUrl,
     receiptSha256: digest(await readFile(receiptPath)), generationId: id,
     generationSha256: digest(await readFile(generationPath)), stateSha256: digest(await readFile(input.standaloneState)),
+    rendererAttemptId: mounted.attemptId, rendererBindingDigest: mounted.details.bindingDigest, coldAttemptId: coldStartup.attemptId,
   };
 }
 

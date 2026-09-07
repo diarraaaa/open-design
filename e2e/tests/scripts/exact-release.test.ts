@@ -155,17 +155,18 @@ describe("exact Electron release topology", () => {
     await run(process.execPath, [resolve(workspaceRoot, "tools/release/bin/tools-release.mjs"), "release-policy", "--request", policyRequest, "--receipt", policyReceipt]);
     await writeFile(publishReceipt, JSON.stringify({ schemaVersion: 1, operation: "exact.publish", profile: "exact-validation", channel: "betahyx", releaseVersion: "1.2.3-betahyx.4", sourceCommit, target, requiredAcceptances: [required] }));
 
-    const installedFiles = await Promise.all(["host.mjs", "supervisor.mjs", "content.json", "trust.json", "seed.bin"].map(async (file) => {
+    const installedFiles = await Promise.all(["host.mjs", "supervisor.mjs", "content.json", "trust.json", "seed.bin", "updater-provider.mjs"].map(async (file) => {
       const body = Buffer.from(`installed:${file}`);
       await writeFile(join(installedRoot, file), body);
       return { file, sha256: createHash("sha256").update(body).digest("hex"), size: body.length };
     }));
     await writeFile(join(installedRoot, "standalone-installation.json"), JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       channel: "betahyx",
       releaseVersion: "1.2.3-betahyx.4",
       target: "darwin-arm64",
       host: installedFiles[0],
+      updaterProvider: installedFiles[5],
       supervisor: installedFiles[1],
       content: installedFiles[2],
       trust: installedFiles[3],
@@ -209,6 +210,15 @@ describe("exact Electron release topology", () => {
     await writeFile(join(standaloneGenerations, `${generationId}.json`), JSON.stringify({
       schemaVersion: 4, id: generationId, channel: "betahyx", releaseVersion: "1.2.3-betahyx.4",
     }));
+    const hotInput = { ...input, hotAcceptanceReceipt: hotReceipt, standaloneState, standaloneGenerationsRoot: standaloneGenerations };
+    await expect(collect(hotInput)).rejects.toThrow("mounted candidate renderer");
+    await writeFile(runtimeLog, [
+      { attemptId: "hot-attempt", event: "startup.committed" },
+      { attemptId: "hot-attempt", event: "renderer.generation.committed", details: { generationId, bindingDigest: "f".repeat(64) } },
+      { attemptId: "hot-attempt", event: "shutdown.complete" },
+      { attemptId: "cold-attempt", event: "startup.committed", details: { generationId } },
+      { attemptId: "cold-attempt", event: "shutdown.complete" },
+    ].map((event) => JSON.stringify(event)).join("\n"));
     await collect({ ...input, hotAcceptanceReceipt: hotReceipt, standaloneState, standaloneGenerationsRoot: standaloneGenerations });
     const hotCredential = JSON.parse(await readFile(join(acceptanceRoot, "electron-darwin-arm64.json"), "utf8"));
     expect(hotCredential.installed.proof).toMatchObject({
