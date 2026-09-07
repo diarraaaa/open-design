@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import { createHash } from "node:crypto";
 import { standaloneTreeSha256 } from "@open-design/standalone";
+import { OPEN_DESIGN_DATA_RESOURCE_IDS } from "@open-design/contracts";
 import { CLOSURE_DATA_RESOURCES } from "../src/data-resources.js";
-import { buildClosureDataResources } from "../scripts/data-resources.js";
+import { buildClosureDataResources } from "../src/build/data-resources.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -21,6 +22,9 @@ async function fixture() {
 }
 
 describe("independent Closure data blobs", () => {
+  it("produces exactly the product contract data set", () => {
+    expect(CLOSURE_DATA_RESOURCES.map(({ id }) => id)).toEqual(OPEN_DESIGN_DATA_RESOURCE_IDS);
+  });
   it("rebuilds deterministic archives and changes only the selected resource bytes", async () => {
     const input = await fixture();
     const [first, simultaneous] = await Promise.all([buildClosureDataResources(input), buildClosureDataResources(input)]);

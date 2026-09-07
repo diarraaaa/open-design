@@ -9,7 +9,8 @@
   "files": ["dist"],
   "exports": {
     ".": {"types": "./dist/index.d.ts", "default": "./dist/index.mjs"},
-    "./launcher": {"types": "./dist/launcher.d.ts", "default": "./dist/launcher.mjs"}
+    "./launcher": {"types": "./dist/launcher.d.ts", "default": "./dist/launcher.mjs"},
+    "./build-resources": {"types": "./dist/build/data-resources.d.ts", "default": "./dist/build/data-resources.mjs"}
   },
   "scripts": {
     "build": "tsx ./esbuild.config.ts && tsc -p tsconfig.json --emitDeclarationOnly",

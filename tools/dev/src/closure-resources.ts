@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import JSZip from "jszip";
 import { standaloneTreeSha256 } from "@open-design/standalone";
+import { buildClosureDataResources, type ClosureDataResourceArtifact } from "@open-design/closure/build-resources";
 
 export const DEV_CLOSURE_RESOURCES_SCHEMA_VERSION = 1 as const;
 
@@ -20,7 +21,7 @@ type Resource = Readonly<{
 
 export type DevClosureResourcesReceipt = Readonly<{
   operation: "closure.resources.development";
-  resources: readonly Resource[];
+  resources: readonly (Resource | ClosureDataResourceArtifact)[];
   schemaVersion: typeof DEV_CLOSURE_RESOURCES_SCHEMA_VERSION;
 }>;
 
@@ -85,10 +86,11 @@ export async function buildDevClosureResources(input: Readonly<{
   const webEntry = join(workspaceRoot, "apps", "web", "dist", "sidecar", "index.js");
   const webRoot = await standaloneWebRoot(workspaceRoot);
   await Promise.all([regularFile(daemonEntry, "daemon Sidecar entry"), regularFile(webEntry, "Web Sidecar entry"), mkdir(outputRoot, { recursive: true })]);
-  const resources = await Promise.all([
+  const runtimeResources = await Promise.all([
     archive({ body: wrapper(daemonEntry), file: "open-design-daemon.zip", id: "open-design-daemon", outputRoot }),
     archive({ body: wrapper(webEntry, { OD_WEB_STANDALONE_ROOT: webRoot }), file: "open-design-web.zip", id: "open-design-web", outputRoot }),
   ]);
+  const resources = [...runtimeResources, ...await buildClosureDataResources({ workspaceRoot, outputDirectory: outputRoot })];
   const receipt = Object.freeze({ schemaVersion: 1 as const, operation: "closure.resources.development" as const, resources: Object.freeze(resources) });
   await writeFile(join(outputRoot, "resource-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
   return receipt;

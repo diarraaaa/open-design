@@ -6,6 +6,7 @@ import JSZip from "jszip";
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { createHash } from "node:crypto";
+import { CLOSURE_DATA_RESOURCES } from "@open-design/closure/build-resources";
 
 import { buildDevClosureResources } from "../src/closure-resources.js";
 
@@ -16,6 +17,10 @@ describe("tools-dev Closure fixture resources", () => {
   it("describes local producer references with a standard fixture receipt", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "electron-dev-closure-workspace-"));
     roots.push(workspaceRoot);
+    for (const resource of CLOSURE_DATA_RESOURCES) for (const input of resource.inputs) {
+      await mkdir(join(workspaceRoot, input.source), { recursive: true });
+      await writeFile(join(workspaceRoot, input.source, "content.txt"), input.source);
+    }
     const daemonEntry = join(workspaceRoot, "apps", "daemon", "dist", "sidecar", "index.js");
     const webEntry = join(workspaceRoot, "apps", "web", "dist", "sidecar", "index.js");
     const webServer = join(workspaceRoot, "apps", "web", ".next", "standalone", "apps", "web", "server.js");
@@ -33,13 +38,17 @@ describe("tools-dev Closure fixture resources", () => {
 
     assert.equal(receipt.operation, "closure.resources.development");
     assert.deepEqual(JSON.parse(await readFile(join(outputRoot, "resource-receipt.json"), "utf8")), receipt);
-    assert.deepEqual(receipt.resources.map(({ id }) => id), ["open-design-daemon", "open-design-web"]);
+    assert.deepEqual(receipt.resources.map(({ id }) => id), ["open-design-daemon", "open-design-web", ...CLOSURE_DATA_RESOURCES.map(({ id }) => id)]);
     for (const resource of receipt.resources) {
       assert.match(resource.treeSha256, /^[a-f0-9]{64}$/u);
       const bytes = await readFile(resource.path);
       assert.equal(bytes.byteLength, resource.size);
       assert.equal(createHash("sha256").update(bytes).digest("hex"), resource.sha256);
       const zip = await JSZip.loadAsync(await readFile(resource.path));
+      if (resource.entrypoint === "resource.json") {
+        assert.equal(JSON.parse(await zip.file("resource.json")!.async("string")).id, resource.id);
+        continue;
+      }
       assert.deepEqual(Object.keys(zip.files), ["sidecar.mjs"]);
       const source = await zip.file("sidecar.mjs")!.async("string");
       assert.ok(source.includes("await import(\"file://"));

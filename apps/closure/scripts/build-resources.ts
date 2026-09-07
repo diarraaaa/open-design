@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { standaloneTreeSha256 } from "@open-design/standalone";
 import { build } from "esbuild";
 import JSZip from "jszip";
-import { buildClosureDataResources } from "./data-resources.ts";
+import { buildClosureDataResources } from "@open-design/closure/build-resources";
 
 type TreeEntry = Readonly<{ path: string; sha256: string; size: number }>;
 

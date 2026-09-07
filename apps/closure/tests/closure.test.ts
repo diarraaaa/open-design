@@ -1,5 +1,7 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { OPEN_DESIGN_DATA_RESOURCE_IDS } from "@open-design/contracts";
 
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -39,7 +41,7 @@ describe("Closure generation runtime", () => {
   it.each(["electron", "terminal"])("shares exact daemon/Web resources and authenticates the invoking attachment when %s starts first", async (firstType) => {
     sidecars.spawned.length = 0;
     sidecars.invoked.length = 0;
-    const runtimeRoot = join(tmpdir(), "closure-runtime-test");
+    const runtimeRoot = await mkdtemp(join(tmpdir(), "closure-runtime-test-"));
     const generation: GenerationRecord = {
       schemaVersion: 4,
       id: "a".repeat(64),
@@ -50,6 +52,7 @@ describe("Closure generation runtime", () => {
       minimumShellVersions: { electron: "0.1.0", terminal: "0.1.0" },
       launcher: { protocol: "standalone-launcher-v1", resourceId: "standalone-launcher", blobSha256: "b".repeat(64), entrypoint: "/fixture/launcher.mjs", path: "/fixture/launcher.mjs" },
       resources: {
+        ...Object.fromEntries(OPEN_DESIGN_DATA_RESOURCE_IDS.map(id => [id, { component: "standalone.resource" as const, blobSha256: "3".repeat(64), entrypoint: `/fixture/${id}/resource.json`, materialization: { type: "zip" as const, entrypoint: "resource.json", treeSha256: "4".repeat(64) }, mediaType: "application/zip", path: `/fixture/${id}`, size: 45, sync: true }])),
         "standalone-launcher": { component: "standalone.launcher", blobSha256: "b".repeat(64), entrypoint: "/fixture/launcher.mjs", materialization: { type: "file", entrypoint: "launcher.mjs" }, mediaType: "text/javascript", path: "/fixture/launcher.mjs", size: 42, sync: true },
         "open-design-daemon": { component: "standalone.resource", blobSha256: "f".repeat(64), entrypoint: "/fixture/daemon/sidecar.mjs", materialization: { type: "zip", entrypoint: "sidecar.mjs", treeSha256: "1".repeat(64) }, mediaType: "application/zip", path: "/fixture/daemon", size: 43, sync: true },
         "open-design-web": { component: "standalone.resource", blobSha256: "9".repeat(64), entrypoint: "/fixture/web/sidecar.mjs", materialization: { type: "zip", entrypoint: "sidecar.mjs", treeSha256: "2".repeat(64) }, mediaType: "application/zip", path: "/fixture/web", size: 44, sync: true },
@@ -66,6 +69,10 @@ describe("Closure generation runtime", () => {
           layout: { dataRoot: join(runtimeRoot, "data"), logsRoot: join(runtimeRoot, "logs"), resourceStoreRoot: join(runtimeRoot, "store"), runtimeRoot: join(runtimeRoot, "processes"), sidecarSupervisorPath: join(runtimeRoot, "supervisor.mjs") },
       }),
     };
+    const incomplete = { ...generation, resources: { ...generation.resources } };
+    delete incomplete.resources.skills;
+    await expect(standaloneGenerationHandoff({ ...request, binding: createStandaloneGenerationBinding(incomplete, scope) })).rejects.toThrow("requires exact resource skills");
+    expect(sidecars.spawned).toHaveLength(0);
     const handle = await standaloneGenerationHandoff(request);
     const otherType = firstType === "electron" ? "terminal" : "electron";
     const other = await standaloneGenerationHandoff({ ...request, attachment: { id: `${otherType}-fixture`, shell: { ...request.attachment.shell, type: otherType } } });
@@ -92,6 +99,7 @@ describe("Closure generation runtime", () => {
       input: { schemaVersion: 1, operation: "register", secret: authSecret },
     })).resolves.toMatchObject({ outcome: "accepted", output: { schemaVersion: 1, accepted: true } });
     expect(sidecars.spawned.map(({ app }) => app)).toEqual(["daemon", "web"]);
+    expect(JSON.parse(sidecars.spawned[0]!.env.OD_DATA_RESOURCE_ROOTS!)).toEqual({ schemaVersion: 1, roots: Object.fromEntries(OPEN_DESIGN_DATA_RESOURCE_IDS.map(id => [id, `/fixture/${id}`])) });
     expect(sidecars.spawned[0]!.env.OD_REQUIRE_DESKTOP_AUTH).toBe(firstType === "electron" ? "1" : undefined);
     expect(sidecars.spawned[1]!.env).toMatchObject({ OD_PORT: "17578", OD_WEB_OUTPUT_MODE: "standalone" });
     expect(sidecars.invoked).toContainEqual({ app: "daemon", type: "register-desktop-auth", input: { secret: authSecret } });
@@ -107,6 +115,7 @@ describe("Closure generation runtime", () => {
     } finally {
       await other.close();
       await handle.close();
+      await rm(runtimeRoot, { recursive: true, force: true });
     }
   });
 

@@ -3,7 +3,8 @@ import { link, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/pr
 import { join, relative, resolve } from "node:path";
 import JSZip from "jszip";
 import { standaloneTreeSha256 } from "@open-design/standalone";
-import { CLOSURE_DATA_RESOURCES, type ClosureDataResourceId } from "../src/data-resources.ts";
+import { CLOSURE_DATA_RESOURCES, type ClosureDataResourceId } from "../data-resources.js";
+export { CLOSURE_DATA_RESOURCES } from "../data-resources.js";
 
 type FileEntry = Readonly<{ path: string; body: Buffer; sha256: string; size: number }>;
 export type ClosureDataResourceArtifact = Readonly<{

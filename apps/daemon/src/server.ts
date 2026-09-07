@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { resolveProductResourceRoots } from './product-resource-paths.js';
 import type {
   DesktopExportArtifactInput,
   DesktopExportArtifactResult,
@@ -1170,6 +1171,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = resolveProjectRoot(__dirname);
 const RESOURCE_ROOT_ENV = 'OD_RESOURCE_ROOT';
+const PRODUCT_RESOURCE_ROOTS = resolveProductResourceRoots();
 
 const DAEMON_RESOURCE_ROOT = resolveDaemonResourceRoot({
   safeBases: [
@@ -1187,7 +1189,7 @@ const STATIC_DIR = path.join(PROJECT_ROOT, 'apps', 'web', 'out');
 // Baked plugin preview clips (scripts/bake-plugin-previews.mjs). Served at
 // PLUGIN_PREVIEWS_ROUTE; their manifest rewrites html plugins' previews to a
 // cheap poster + hover-play video in the home gallery.
-const PLUGIN_PREVIEWS_DIR = resolveDaemonPluginPreviewsDir({
+const PLUGIN_PREVIEWS_DIR = PRODUCT_RESOURCE_ROOTS?.['plugin-previews'] ?? resolveDaemonPluginPreviewsDir({
   resourceRoot: DAEMON_RESOURCE_ROOT,
   projectRoot: PROJECT_ROOT,
 });
@@ -1218,12 +1220,12 @@ export function resolveOpenDesignNodeBin({
 }
 
 const OD_NODE_BIN = resolveOpenDesignNodeBin();
-const SKILLS_DIR = resolveDaemonResourceDir(
+const SKILLS_DIR = PRODUCT_RESOURCE_ROOTS?.skills ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'skills',
   path.join(PROJECT_ROOT, 'skills'),
 );
-const DESIGN_SYSTEMS_DIR = resolveDaemonResourceDir(
+const DESIGN_SYSTEMS_DIR = PRODUCT_RESOURCE_ROOTS?.['design-systems'] ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'design-systems',
   path.join(PROJECT_ROOT, 'design-systems'),
@@ -1232,12 +1234,12 @@ const DESIGN_SYSTEMS_DIR = resolveDaemonResourceDir(
 // split (PR #955) so the EntryView Templates tab gets the large rendering
 // catalogue and Settings → Skills only carries functional skills the agent
 // invokes mid-task. See specs/current/skills-and-design-templates.md.
-const DESIGN_TEMPLATES_DIR = resolveDaemonResourceDir(
+const DESIGN_TEMPLATES_DIR = PRODUCT_RESOURCE_ROOTS?.['design-templates'] ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'design-templates',
   path.join(PROJECT_ROOT, 'design-templates'),
 );
-const CRAFT_DIR = resolveDaemonResourceDir(
+const CRAFT_DIR = PRODUCT_RESOURCE_ROOTS?.craft ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'craft',
   path.join(PROJECT_ROOT, 'craft'),
@@ -1245,7 +1247,7 @@ const CRAFT_DIR = resolveDaemonResourceDir(
 // User-installed skills and design systems live under the runtime data dir
 // so they respect OD_DATA_DIR overrides (test isolation, packaged runs).
 // Defined after RUNTIME_DATA_DIR is resolved below.
-const FRAMES_DIR = resolveDaemonResourceDir(
+const FRAMES_DIR = PRODUCT_RESOURCE_ROOTS?.frames ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'frames',
   path.join(PROJECT_ROOT, 'assets', 'frames'),
@@ -1254,22 +1256,22 @@ const FRAMES_DIR = resolveDaemonResourceDir(
 // `listCodexPets` scans this in addition to `~/.codex/pets/` so the
 // "Recently hatched" grid is non-empty out-of-the-box and users do not
 // need to hit the "Download community pets" button to try a few pets.
-const BUNDLED_PETS_DIR = resolveDaemonResourceDir(
+const BUNDLED_PETS_DIR = PRODUCT_RESOURCE_ROOTS?.['community-pets'] ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'community-pets',
   path.join(PROJECT_ROOT, 'assets', 'community-pets'),
 );
-const PROMPT_TEMPLATES_DIR = resolveDaemonResourceDir(
+const PROMPT_TEMPLATES_DIR = PRODUCT_RESOURCE_ROOTS?.['prompt-templates'] ?? resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'prompt-templates',
   path.join(PROJECT_ROOT, 'prompt-templates'),
 );
-const BUNDLED_PLUGINS_DIR = resolveDaemonResourceDir(
+const BUNDLED_PLUGINS_DIR = PRODUCT_RESOURCE_ROOTS ? path.join(PRODUCT_RESOURCE_ROOTS.plugins, '_official') : resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   path.join('plugins', '_official'),
   defaultBundledRoot(PROJECT_ROOT),
 );
-const PLUGIN_REGISTRY_DIR = resolveDaemonResourceDir(
+const PLUGIN_REGISTRY_DIR = PRODUCT_RESOURCE_ROOTS ? path.join(PRODUCT_RESOURCE_ROOTS.plugins, 'registry') : resolveDaemonResourceDir(
   DAEMON_RESOURCE_ROOT,
   'plugins/registry',
   path.join(PROJECT_ROOT, 'plugins', 'registry'),

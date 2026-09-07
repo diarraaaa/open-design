@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": {"allowImportingTsExtensions": true, "emitDeclarationOnly": false, "noEmit": true, "rootDir": "."},
+  "compilerOptions": {"emitDeclarationOnly": false, "noEmit": true, "rootDir": "."},
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

@@ -795,6 +795,9 @@ importers:
 
   tools/dev:
     dependencies:
+      '@open-design/closure':
+        specifier: workspace:*
+        version: link:../../apps/closure
       '@open-design/platform':
         specifier: workspace:*
         version: link:../../packages/platform

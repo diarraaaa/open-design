@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
+import { OPEN_DESIGN_DATA_RESOURCE_IDS, OPEN_DESIGN_DATA_RESOURCE_ROOTS_ENV, validateOpenDesignDataResourceRoots } from "@open-design/contracts";
 
 import {
   APP_KEYS,
@@ -146,6 +147,10 @@ function resultBase(command: StandaloneRuntimeCommand) {
 async function startOpenDesignGeneration(request: StandaloneHandoffRequest): Promise<StandaloneRuntimeHandle> {
   const daemonResource = requiredResource(request, OPEN_DESIGN_DAEMON_RESOURCE_ID);
   const webResource = requiredResource(request, OPEN_DESIGN_WEB_RESOURCE_ID);
+  const dataResources = validateOpenDesignDataResourceRoots({
+    schemaVersion: 1,
+    roots: Object.fromEntries(OPEN_DESIGN_DATA_RESOURCE_IDS.map(id => [id, requiredResource(request, id).path])),
+  });
   const layout = await readStandaloneRuntimeLayoutCapability({
     attachmentId: request.attachment.id,
     bindingDigest: request.binding.digest,
@@ -200,6 +205,7 @@ async function startOpenDesignGeneration(request: StandaloneHandoffRequest): Pro
         OD_INSTALLATION_DIR: dirname(layout.dataRoot),
         OD_RESOURCE_ROOT: daemonResource.path,
         OD_RESOURCE_STORE_ROOT: layout.resourceStoreRoot,
+        [OPEN_DESIGN_DATA_RESOURCE_ROOTS_ENV]: JSON.stringify(dataResources),
       },
       logPath: join(layout.logsRoot, APP_KEYS.DAEMON, "latest.log"),
       request,
@@ -299,4 +305,9 @@ async function startOpenDesignGeneration(request: StandaloneHandoffRequest): Pro
 }
 
 /** Exact generation-owned Web/daemon body consumed by every Shell. */
-export const standaloneGenerationHandoff = createStandaloneGenerationBootloader(startOpenDesignGeneration);
+const generationHandoff = createStandaloneGenerationBootloader(startOpenDesignGeneration);
+export async function standaloneGenerationHandoff(request: StandaloneHandoffRequest): Promise<StandaloneRuntimeHandle> {
+  // Reject incomplete input before the asynchronous generation body is admitted.
+  for (const id of [OPEN_DESIGN_DAEMON_RESOURCE_ID, OPEN_DESIGN_WEB_RESOURCE_ID, ...OPEN_DESIGN_DATA_RESOURCE_IDS]) requiredResource(request, id);
+  return generationHandoff(request);
+}
