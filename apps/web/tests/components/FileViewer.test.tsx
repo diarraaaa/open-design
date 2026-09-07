@@ -3608,6 +3608,10 @@ describe('FileViewer SVG artifacts', () => {
       expect(screen.getByTestId('artifact-preview-frame').getAttribute('data-od-render-mode')).toBe('runtime-url');
     });
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    // This case is about save/retry bookkeeping, so the document behaves the
+    // way a real one does and confirms each mirror. A silent document would
+    // hold the save open for the mirror budget and swallow the retry as busy.
+    spyOnManualEditMirrors(frame);
     const textTarget = {
       ...manualEditTarget('copy', 'Copy', 20),
       kind: 'text' as const,
