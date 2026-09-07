@@ -108,6 +108,7 @@ afterEach(async () => {
   fixtureRestoreSchedules = 0;
   fixtureRestoreReads = 0;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   await Promise.all(servers.splice(0).map(async (server) => await new Promise<void>((resolveClose, reject) => server.close((error) => error == null ? resolveClose() : reject(error)))));
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
@@ -323,16 +324,28 @@ describe("Electron production Standalone authority", () => {
           attachmentId: terminalAttachment.id,
         },
       );
+      // The parent may write the logical ledger only while the physical host
+      // is retired. The real child host is unaffected by this parent-local spy.
+      const writesWithLiveHost: number[] = [];
+      const watchedStamp = stamp;
+      const writeLedger = StandaloneHostLifecycleLedger.prototype.write;
+      const ledgerWrites = vi.spyOn(StandaloneHostLifecycleLedger.prototype, "write").mockImplementation(async function (this: StandaloneHostLifecycleLedger, state) {
+        const live = await findSidecarProcesses(watchedStamp);
+        if (live.length > 0) writesWithLiveHost.push(live.length);
+        await writeLedger.call(this, state);
+      });
       await expect(prepared.contentUpdater.applyNow()).resolves.toMatchObject({
         status: "blocked",
         reason: "occupied",
         occupants: [{ attachmentId: terminalAttachment.id }],
       });
+      expect(ledgerWrites).not.toHaveBeenCalled();
       const applied = await prepared.contentUpdater.applyNow({ force: true });
       expect(applied).toMatchObject({ status: "applied", generation: { releaseVersion: nextMetadata.releaseVersion }, lifecycle: { state: "running" } });
       if (applied.status !== "applied") throw new Error("content update did not apply");
       expect(applied.binding.digest).not.toBe(prepared.binding.digest);
       expect(await handle.readStatus()).toMatchObject({ state: "running", generationId: applied.generation.id, bindingDigest: applied.binding.digest });
+      expect(writesWithLiveHost).toEqual([]);
 
       const failedMetadata: StandaloneMetadata = {
         ...nextMetadata,
@@ -373,6 +386,8 @@ describe("Electron production Standalone authority", () => {
       expect(feedback).not.toContainEqual(expect.objectContaining({ phase: "closure-ready", state: "complete", generationId: failedPreparation.generation.id }));
       expect(feedback).toContainEqual(expect.objectContaining({ phase: "rollback", state: "complete", generationId: applied.generation.id }));
       expect(await handle.readStatus()).toMatchObject({ state: "running", generationId: applied.generation.id, bindingDigest: applied.binding.digest });
+      expect(writesWithLiveHost).toEqual([]);
+      ledgerWrites.mockRestore();
 
       const updaterLedger = new ElectronStandaloneShellUpdaterLedger(join(runtimeRoot, "standalone-store"), { channel: manifest.channel, namespace: manifest.namespace }, "electron");
       const shellArtifact = Buffer.from("signed shell-only electron distribution");

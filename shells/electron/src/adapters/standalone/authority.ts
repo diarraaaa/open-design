@@ -801,37 +801,50 @@ export function createElectronStandaloneAuthorityFactory(
               let nextHost = activeHost;
               let attemptedResourceSet: ReturnType<typeof bindElectronPhysicalResourceSet> | null = null;
               let retired = false;
+              let hostAvailable = true;
               const lifecycle: LifecyclePort = {
                 start: async () => { throw new Error("Electron guarded content restart cannot perform an unbound start"); },
                 awaitReady: async (scope, readiness) => await nextHost.lifecycle.awaitReady(scope, readiness),
                 heartbeat: async (scope, owner) => await nextHost.lifecycle.heartbeat(scope, owner),
                 release: async (scope, attachmentId) => await nextHost.lifecycle.release(scope, attachmentId),
-                status: async () => await continuation.status(),
-                stop: async (_scope, fence) => await continuation.stop(fence),
-                beginTransition: async (_scope, kind, transitionOptions): Promise<StandaloneLifecycleTransitionResult> => {
-                  const acquired = await continuation.beginTransition(kind, transitionOptions);
+                status: async (scope) => hostAvailable ? await nextHost.lifecycle.status(scope) : await continuation.status(),
+                stop: async (scope, fence) => hostAvailable ? await nextHost.lifecycle.stop(scope, fence) : await continuation.stop(fence),
+                beginTransition: async (scope, kind, transitionOptions): Promise<StandaloneLifecycleTransitionResult> => {
+                  // The live host serializes reservations with attachment IPC.
+                  // The parent becomes a ledger writer only after retirement.
+                  const acquired = await nextHost.lifecycle.beginTransition(scope, kind, transitionOptions);
                   if (acquired.state === "blocked") return acquired;
-                  let descriptor = acquired.transition;
+                  const live = acquired.transition;
+                  let sealed: Awaited<ReturnType<StandaloneHostLifecycle["forceStopTransition"]>> | null = null;
                   return Object.freeze({
                     state: "acquired" as const,
                     transition: Object.freeze({
-                      attemptId: descriptor.attemptId,
-                      get fence() { return descriptor.fence; },
-                      get expiresAt() { return descriptor.expiresAt; },
-                      heartbeatIntervalMs: descriptor.heartbeatIntervalMs,
-                      occupants: descriptor.occupants,
-                      get phase() { return descriptor.phase; },
-                      async renew() { descriptor = await continuation.renewTransition(descriptor.token, descriptor.fence); },
-                      async release() { await continuation.releaseTransition(descriptor.token, descriptor.fence); },
+                      attemptId: live.attemptId,
+                      get fence() { return sealed?.fence ?? live.fence; },
+                      get expiresAt() { return sealed?.expiresAt ?? live.expiresAt; },
+                      heartbeatIntervalMs: live.heartbeatIntervalMs,
+                      occupants: live.occupants,
+                      get phase() { return sealed?.phase ?? live.phase; },
+                      async renew() {
+                        if (sealed == null) await live.renew();
+                        else sealed = await continuation.renewTransition(sealed.token, sealed.fence);
+                      },
+                      async release() {
+                        if (sealed == null) await live.release();
+                        else await continuation.releaseTransition(sealed.token, sealed.fence);
+                      },
                       async forceStop() {
                         await guard.retire();
                         retired = true;
-                        descriptor = await continuation.forceStopTransition(descriptor.token, descriptor.fence);
+                        hostAvailable = false;
+                        sealed = await continuation.forceStopTransition(live.attemptId, sealed?.fence ?? live.fence);
                       },
                       async completeBoundStart(nextGeneration: GenerationRecord, owner: LifecycleAttachment, nextBinding: StandaloneGenerationBinding) {
+                        if (sealed == null) throw new Error("Electron content restart requires physical retirement and a sealed transition");
                         attemptedResourceSet = bindElectronPhysicalResourceSet(resources, nextBinding);
                         nextHost = await launchHost(nextBinding);
-                        const started = await nextHost.lifecycle.completeTransitionStart(descriptor.token, descriptor.fence, nextGeneration, owner, nextBinding);
+                        hostAvailable = true;
+                        const started = await nextHost.lifecycle.completeTransitionStart(sealed.token, sealed.fence, nextGeneration, owner, nextBinding);
                         activeHost = nextHost;
                         activeGeneration = nextGeneration;
                         return started;
