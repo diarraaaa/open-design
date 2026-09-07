@@ -3,6 +3,10 @@ import type * as BetterSqlite3 from 'better-sqlite3';
 import path from 'node:path';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import {
+  findRealTagOffset,
+  HTML_TAG_PATTERNS,
+} from '@open-design/contracts/runtime/html-injection-points';
+import {
   resolveOptionalLocalWorkspaceRequestAuthority,
   type VerifyWorkspaceRequestAuthority,
 } from '../../collab/workspace-resource-mutation.js';
@@ -199,11 +203,13 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
       res.setHeader('Content-Type', ct);
       if (ext === '.html' && typeof contentRel === 'string') {
         buf = Buffer.from(
-          rewritePluginAssetUrls(
-            buf.toString('utf8'),
-            routeParam(req.params.id),
-            path.posix.dirname(contentRel.replace(/\\/g, '/')),
-            navigationScopeQuery(authority),
+          injectPluginPreviewMotionBridge(
+            rewritePluginAssetUrls(
+              buf.toString('utf8'),
+              routeParam(req.params.id),
+              path.posix.dirname(contentRel.replace(/\\/g, '/')),
+              navigationScopeQuery(authority),
+            ),
           ),
           'utf8',
         );
@@ -212,6 +218,46 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
+  }
+
+  function injectPluginPreviewMotionBridge(html: string): string {
+    if (!html || html.includes('data-od-plugin-preview-motion')) return html;
+    const bridge = `<script data-od-plugin-preview-motion>(function(){
+  var animationFrame = 0;
+  function scrollRoot(){ return document.scrollingElement || document.documentElement; }
+  function animateTo(target, duration){
+    cancelAnimationFrame(animationFrame);
+    var root = scrollRoot();
+    var from = root ? Number(root.scrollTop || 0) : Number(window.scrollY || 0);
+    var startedAt = performance.now();
+    function step(now){
+      var progress = Math.min(1, (now - startedAt) / Math.max(1, duration));
+      var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+      window.scrollTo(0, Math.round(from + (target - from) * eased));
+      if (progress < 1) animationFrame = requestAnimationFrame(step);
+    }
+    animationFrame = requestAnimationFrame(step);
+  }
+  window.addEventListener('message', function(event){
+    if (event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || data.type !== 'od:plugin-preview-motion' || data.motion !== 'scroll') return;
+    requestAnimationFrame(function(){
+      var root = scrollRoot();
+      var current = root ? Number(root.scrollTop || 0) : Number(window.scrollY || 0);
+      var maximum = Math.max(0, Number(root ? root.scrollHeight : document.documentElement.scrollHeight) - window.innerHeight);
+      var target = data.active ? maximum : 0;
+      var distance = Math.abs(target - current);
+      var duration = data.active
+        ? Math.min(7500, Math.max(900, distance / 0.3))
+        : Math.min(500, Math.max(180, distance / 1.2));
+      animateTo(target, duration);
+    });
+  });
+})();</script>`;
+    const bodyClose = findRealTagOffset(html, HTML_TAG_PATTERNS.bodyClose);
+    if (bodyClose >= 0) return `${html.slice(0, bodyClose)}${bridge}${html.slice(bodyClose)}`;
+    return `${html}${bridge}`;
   }
 
   function iframeOnlyHtmlShellTarget(html: string): string | null {

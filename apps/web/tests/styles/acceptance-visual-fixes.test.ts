@@ -105,9 +105,8 @@ describe('PR #7678 — document preset thumbnails are horizontally off-center', 
       'scale(var(--home-html-preview-scale))',
     );
     expect(ruleValue(documentIframe, 'left')).toBe('50%');
-    expect(ruleValue(documentIframe, 'transform')).toBe(
-      'translateX(-50%) scale(var(--home-html-preview-scale))',
-    );
+    expect(ruleValue(documentIframe, 'translate')).toBe('-50% 0');
+    expect(() => ruleValue(documentIframe, 'transform')).toThrow(/Missing CSS property/);
     expect(ruleValue(documentIframe, 'transform-origin')).toBe('top center');
   });
 });

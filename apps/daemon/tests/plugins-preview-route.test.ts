@@ -148,6 +148,8 @@ describe('GET /api/plugins/:id/preview', () => {
     expect(resp.headers.get('x-content-type-options')).toBe('nosniff');
     const body = await resp.text();
     expect(body).toContain('preview body');
+    expect(body).toContain('data-od-plugin-preview-motion');
+    expect(body).toContain("data.type !== 'od:plugin-preview-motion'");
   });
 
   it('returns 404 when the plugin id is unknown', async () => {
