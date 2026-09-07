@@ -9,8 +9,15 @@ import { verifyElectronInstallerArtifactForExecution } from "./platform-trust.js
 const helperSource = String.raw`const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { constants } = require("node:fs");
-const { open, writeFile, unlink } = require("node:fs/promises");
+const { open, writeFile, rename, unlink } = require("node:fs/promises");
 const input = JSON.parse(Buffer.from(process.argv[2], "base64url").toString("utf8"));
+const result = async (value) => {
+  const temporary = input.resultPath + "." + process.pid + ".tmp";
+  try {
+    await writeFile(temporary, JSON.stringify(value) + "\n", { encoding: "utf8", flag: "wx" });
+    await rename(temporary, input.resultPath);
+  } finally { await unlink(temporary).catch(() => undefined); }
+};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const alive = () => { try { process.kill(input.parentPid, 0); return true; } catch (error) { if (error && error.code === "ESRCH") return false; throw error; } };
 const verifyArtifact = async () => {
@@ -43,9 +50,9 @@ const verifyArtifact = async () => {
     const child = spawn(command, args, { cwd: input.runtimeRoot, detached: true, stdio: "ignore", windowsHide: true });
     child.unref();
   }
-  await writeFile(input.resultPath, JSON.stringify({ schemaVersion: 1, state: input.mode === "execute" ? "launched" : "verified", installAttemptId: input.installAttemptId, artifactPath: input.artifact.path, artifactDevice: input.artifact.device, artifactInode: input.artifact.inode, parentPid: input.parentPid }) + "\n", "utf8");
+  await result({ schemaVersion: 1, state: input.mode === "execute" ? "launched" : "verified", installAttemptId: input.installAttemptId, artifactPath: input.artifact.path, artifactDevice: input.artifact.device, artifactInode: input.artifact.inode, parentPid: input.parentPid });
 })().catch(async (error) => {
-  await writeFile(input.resultPath, JSON.stringify({ schemaVersion: 1, state: "failed", message: error instanceof Error ? error.message : String(error) }) + "\n", "utf8").catch(() => undefined);
+  await result({ schemaVersion: 1, state: "failed", message: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
   process.exitCode = 1;
 }).finally(async () => { await unlink(__filename).catch(() => undefined); });
 `;

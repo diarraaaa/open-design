@@ -32,8 +32,11 @@ describe("Electron namespace paths", () => {
       getPath: vi.fn(() => "/product-data"),
       setPath: vi.fn((name: string, path: string) => { calls.push(`set:${name}:${path}`); }),
     };
-    const ensureDirectory = vi.fn(async (path: string) => { calls.push(`mkdir:${path}`); });
-    const paths = await prepareElectronNamespacePaths(app, { channel: "betahyx", namespace: "installed-win" }, ensureDirectory);
+    const ensureDirectory = vi.fn((path: string) => { calls.push(`mkdir:${path}`); });
+    const preparing = prepareElectronNamespacePaths(app, { channel: "betahyx", namespace: "installed-win" }, ensureDirectory);
+    // Chromium may initialize as soon as this turn yields, before await resumes.
+    expect(app.setPath).toHaveBeenCalledTimes(3);
+    const paths = await preparing;
     expect(ensureDirectory).toHaveBeenCalledTimes(4);
     expect(calls.slice(0, 4).every((call) => call.startsWith("mkdir:"))).toBe(true);
     expect(app.setPath.mock.calls).toEqual([

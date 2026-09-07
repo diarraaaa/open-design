@@ -43,7 +43,6 @@ export async function runControlledElectronShell(run: () => Promise<void>): Prom
   // Registration is deliberately synchronous in a supervised Electron
   // generation: Shell preflight must execute before Chromium reports ready.
   registerSidecarProcess(stamp, controlResources);
-  const cdpBootstrapUserDataRoot = app.getPath("userData");
   let state: "starting" | "running" | "failed" | "stopping" = "starting";
   const startupDeadline = new Date(Date.now() + runtimeConfig.warmup.totalTimeoutMs).toISOString();
   // Start preflight synchronously, but do not gate observability on product
@@ -69,7 +68,7 @@ export async function runControlledElectronShell(run: () => Promise<void>): Prom
           title: window?.getTitle() ?? null,
           url: window?.webContents.getURL() ?? null,
           windowVisible: window?.isVisible() ?? false,
-          cdp: inspectElectronCdp(app, cdpBootstrapUserDataRoot),
+          cdp: inspectElectronCdp(app),
           logRoots: Object.freeze([
             Object.freeze({ scope: "shell", path: join(namespaceRoot, "runtime", "electron", "logs") }),
             Object.freeze({ scope: "product", path: join(namespaceRoot, "logs", "product") }),

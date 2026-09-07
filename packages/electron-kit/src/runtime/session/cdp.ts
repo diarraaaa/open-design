@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 export type ElectronCdpDiscovery =
   | Readonly<{ state: "disabled" }>
@@ -18,7 +18,7 @@ export type ElectronCdpApp = Readonly<{
     getSwitchValue(name: string): string;
     hasSwitch(name: string): boolean;
   }>;
-  getPath(name: "userData"): string;
+  getPath(name: "sessionData"): string;
 }>;
 
 function tcpUrl(address: string, port: number): string {
@@ -48,27 +48,15 @@ export function parseElectronCdpActivePort(value: string, address = "127.0.0.1")
 }
 
 /** Project Electron's native remote-debugging switches without owning CDP. */
-export function inspectElectronCdp(app: ElectronCdpApp, bootstrapUserDataRoot = app.getPath("userData")): ElectronCdpDiscovery {
+export function inspectElectronCdp(app: ElectronCdpApp): ElectronCdpDiscovery {
   if (!app.commandLine.hasSwitch("remote-debugging-port")) return Object.freeze({ state: "disabled" });
   const address = app.commandLine.getSwitchValue("remote-debugging-address") || "127.0.0.1";
   const requested = app.commandLine.getSwitchValue("remote-debugging-port");
   if (requested !== "0") return parseElectronCdpActivePort(requested, address);
-  const isolatedRoot = app.getPath("userData");
-  const namespaceMarker = `${sep}exact${sep}channels${sep}`;
-  const markerIndex = isolatedRoot.indexOf(namespaceMarker);
-  // app.setName() may change Electron's bootstrap userData root before
-  // app.whenReady(), so derive the pre-isolation root from the final
-  // channel/namespace path first. The captured early root remains a fallback
-  // for distributions whose product identity is already fixed at launch.
-  const candidates = [
-    ...(markerIndex < 0 ? [] : [isolatedRoot.slice(0, markerIndex)]),
-    isolatedRoot,
-    bootstrapUserDataRoot,
-  ].filter((root, index, roots) => roots.indexOf(root) === index);
-  for (const root of candidates) {
-    try {
-      return parseElectronCdpActivePort(readFileSync(join(root, "DevToolsActivePort"), "utf8"), address);
-    } catch { /* Chromium may not have published this candidate yet. */ }
-  }
+  // A bootstrap-root receipt can belong to another namespace. Never use it as
+  // a fallback; preflight must establish the isolated path before Chromium.
+  try {
+    return parseElectronCdpActivePort(readFileSync(join(app.getPath("sessionData"), "DevToolsActivePort"), "utf8"), address);
+  } catch { /* Chromium may not have published this namespace's receipt yet. */ }
   return Object.freeze({ state: "starting", transport: "tcp" });
 }

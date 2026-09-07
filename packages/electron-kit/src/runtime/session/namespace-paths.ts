@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export type ElectronNamespacePaths = Readonly<{
@@ -44,15 +44,12 @@ export function resolveElectronNamespacePaths(
 export async function prepareElectronNamespacePaths(
   app: ElectronPathApp,
   scope: Readonly<{ channel: string; namespace: string }>,
-  ensureDirectory: (path: string) => Promise<unknown> = (path) => mkdir(path, { recursive: true }),
+  ensureDirectory: (path: string) => void = (path) => { mkdirSync(path, { recursive: true }); },
 ): Promise<ElectronNamespacePaths> {
   const paths = resolveElectronNamespacePaths(app.getPath("userData"), scope);
-  await Promise.all([
-    ensureDirectory(paths.userDataRoot),
-    ensureDirectory(paths.sessionDataRoot),
-    ensureDirectory(paths.logsRoot),
-    ensureDirectory(paths.runtimeRoot),
-  ]);
+  // No async boundary before path identity is installed: Chromium can publish
+  // native CDP/session files under the bootstrap root as soon as we yield.
+  for (const path of [paths.userDataRoot, paths.sessionDataRoot, paths.logsRoot, paths.runtimeRoot]) ensureDirectory(path);
   app.setPath("userData", paths.userDataRoot);
   app.setPath("sessionData", paths.sessionDataRoot);
   app.setPath("logs", paths.logsRoot);
