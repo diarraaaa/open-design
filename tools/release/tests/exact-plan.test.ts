@@ -82,6 +82,7 @@ describe("exact release plan", () => {
 
     const closurePaths = resolveContentIdentityDeclaration(registry, "closure.build").sources.map(({ path }) => path);
     expect(closurePaths).toContain("apps/closure/src");
+    expect(closurePaths).toEqual(expect.arrayContaining(["skills", "design-templates", "design-systems", "craft", "plugins/_official", "plugins/registry", "assets/frames", "assets/community-pets", "prompt-templates", "data/plugin-previews"]));
     expect(closurePaths).not.toContain("shells/electron/src");
     expect(closurePaths).not.toContain("packages/electron-kit/src");
   });

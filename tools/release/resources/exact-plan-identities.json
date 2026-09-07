@@ -65,6 +65,7 @@
       ]
     },
     "closure.build": {
+      "inherits": ["closure.data"],
       "normalizePackageVersion": true,
       "paths": [
         ".node-version",
@@ -110,6 +111,13 @@
         "packages/sidecar-proto/src",
         "packages/standalone/package.json",
         "packages/standalone/src"
+      ]
+    },
+    "closure.data": {
+      "paths": [
+        "skills", "design-templates", "design-systems", "craft",
+        "plugins/_official", "plugins/registry", "assets/frames",
+        "assets/community-pets", "prompt-templates", "data/plugin-previews"
       ]
     },
     "closure.test": {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { standaloneTreeSha256 } from "@open-design/standalone";
 import { build } from "esbuild";
 import JSZip from "jszip";
+import { buildClosureDataResources } from "./data-resources.ts";
 
 type TreeEntry = Readonly<{ path: string; sha256: string; size: number }>;
 
@@ -151,6 +152,7 @@ export async function buildClosureProductResources(input: Readonly<{ outputDirec
   const resources = Object.freeze([
     Object.freeze({ id: "open-design-daemon", file: "open-design-daemon.zip", path: daemonPath, entrypoint: "sidecar.mjs", ...daemon }),
     Object.freeze({ id: "open-design-web", file: "open-design-web.zip", path: webPath, entrypoint: "sidecar.mjs", ...web }),
+    ...await buildClosureDataResources({ workspaceRoot, outputDirectory: artifactsRoot }),
   ]);
   const receipt = Object.freeze({ schemaVersion: 1 as const, operation: "closure.resources.build" as const, resources });
   await writeFile(join(outputDirectory, "resource-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
