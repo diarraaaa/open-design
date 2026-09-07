@@ -10,24 +10,30 @@
 // timers, canvas and scroll.
 //
 // The freeze is only justified while the bridge is actually keeping the
-// document in sync. Six of the nine patch kinds have no bridge message at all
-// (`set-link`, `set-image`, `remove-element`, `set-token`, `set-attributes`,
-// `set-full-source`), so for those the freeze suppresses the reload without
-// anything taking its place — the user saves, the file changes on disk, and
-// the preview does not move.
+// document in sync, and a mirror can fail to land in more than one way:
+// `set-token`, `set-attributes` and `set-full-source` have no mirror message
+// at all, and every mirror the bridge does have can refuse — the target is
+// gone, a link carries markup too ambiguous to relabel, an element the author
+// forced to `data-od-edit="text"` turns out to have children. When that
+// happens the freeze suppresses the reload with nothing taking its place: the
+// user saves, the file changes on disk, and the preview does not move.
 //
 // The retention latch has the same shape of hole. It decides
 // `liveDocumentMatchesSavedSource` from the single patch it is handed, then
-// fingerprints the WHOLE file. A session that saved a link (not mirrored) and
-// then saved text (mirrored) re-arms the latch against a document the link
-// edit never reached, and Manual Edit's exit adopts that stale document.
+// fingerprints the WHOLE file, so a save the document did apply can vouch for
+// a document an earlier unapplied save never reached. Manual Edit then exits
+// onto that stale document.
+//
+// The two cases below therefore drive the product with a preview document
+// that does NOT confirm the mirror, which is the shape every one of those
+// failures reaches the host as.
 //
 // Observable used here: the preview's scoped session id. A replaced document
 // mints a new preview scope, so `data-od-session-id` moving is the witness
 // that the user's save reached the screen, and it staying put is the witness
-// that it did not. The third case pins the other direction — a save the bridge
-// DID mirror must not mint a new scope — so a fix cannot pass by reloading
-// unconditionally.
+// that it did not. The third case pins the other direction — a save the
+// document DID apply must not mint a new scope — so a fix cannot pass by
+// reloading unconditionally.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -171,9 +177,15 @@ describe('FileViewer manual edit — a save the bridge cannot mirror', () => {
   /**
    * Drives the real product flow: mount the viewer on a settled HTML document,
    * open Manual Edit, and answer the runtime-state capture the way the preview
-   * runtime does. Returns the levers the cases need.
+   * runtime does.
+   *
+   * The preview window stands in for the injected edit bridge, including the
+   * part that matters here — it answers every mirror request with whether it
+   * applied. `setDocumentApplies(false)` is a document that refused, which is
+   * how a patch with no mirror, a vanished target and a refused relabel all
+   * reach the host.
    */
-  async function openManualEdit() {
+  async function openManualEdit(documentApplies = true) {
     let currentFile = htmlPreviewFile();
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string'
@@ -242,11 +254,24 @@ describe('FileViewer manual edit — a save the bridge cannot mirror', () => {
       expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
     });
 
-    // The bridge lives in the preview document; nothing here should reach a
-    // jsdom window that cannot host it.
+    // Stand in for the injected edit bridge: take the mirror request and
+    // answer it the way the real document does.
+    let applies = documentApplies;
     const previewWindow = (screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement)
       .contentWindow!;
-    vi.spyOn(previewWindow, 'postMessage').mockImplementation(() => {});
+    vi.spyOn(previewWindow, 'postMessage').mockImplementation((message: unknown) => {
+      const data = message as { requestId?: unknown; id?: unknown } | null;
+      if (typeof data?.requestId !== 'string') return;
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'od-edit-preview:applied',
+          requestId: data.requestId,
+          id: data.id ?? '',
+          applied: applies,
+        },
+        source: previewWindow,
+      }));
+    });
 
     /** Settle the save's async work and deliver the watcher echo. */
     async function settle() {
@@ -286,15 +311,19 @@ describe('FileViewer manual edit — a save the bridge cannot mirror', () => {
       await settle();
     }
 
-    return { leaveManualEdit, saveTextThroughPanel };
+    function setDocumentApplies(next: boolean) {
+      applies = next;
+    }
+
+    return { leaveManualEdit, saveTextThroughPanel, setDocumentApplies };
   }
 
-  // Root cause A. `set-link` has no `od-edit-preview-*` message, so nothing
-  // carries the persisted bytes into the frozen document. With no bridge to
-  // stand in for the reload, the freeze has nothing left to protect and the
-  // save must become visible the ordinary way.
-  it('refreshes the preview document when the save had no live bridge', async () => {
-    const { saveTextThroughPanel } = await openManualEdit();
+  // Root cause A. Nothing carried the persisted bytes into the frozen
+  // document, so there is no live mirror standing in for the reload. The
+  // freeze has nothing left to protect and the save must become visible the
+  // ordinary way.
+  it('refreshes the preview document when the document did not apply the save', async () => {
+    const { saveTextThroughPanel } = await openManualEdit(false);
     const before = liveSessionId();
 
     await saveTextThroughPanel(linkTarget(), 'View tokens EDIT1');
@@ -304,14 +333,15 @@ describe('FileViewer manual edit — a save the bridge cannot mirror', () => {
   });
 
   // Root cause B. The latch is armed from one patch but fingerprints the whole
-  // file, so a mirrored save can vouch for a document an earlier unmirrored
-  // save never reached. Manual Edit then exits onto the stale document and the
-  // user sees EDIT1 while the file on disk says EDIT2.
-  it('shows the persisted revision after leaving an edit session that saved without a bridge', async () => {
-    const { leaveManualEdit, saveTextThroughPanel } = await openManualEdit();
+  // file, so a save the document DID apply can vouch for a document an earlier
+  // unapplied save never reached. Manual Edit then exits onto the stale
+  // document and the user sees EDIT1 while the file on disk says EDIT2.
+  it('shows the persisted revision after leaving a session with an unapplied save', async () => {
+    const { leaveManualEdit, saveTextThroughPanel, setDocumentApplies } = await openManualEdit(false);
     const before = liveSessionId();
 
     await saveTextThroughPanel(linkTarget(), 'View tokens EDIT1');
+    setDocumentApplies(true);
     await saveTextThroughPanel(textTarget(), 'Hero EDIT2');
     await leaveManualEdit();
 
@@ -321,17 +351,29 @@ describe('FileViewer manual edit — a save the bridge cannot mirror', () => {
     expect(liveSessionId()).not.toBe(before);
   });
 
-  // The other direction, green today and required to stay green: a save the
-  // bridge DID mirror keeps its document. Without this, "always reload" would
-  // pass the two cases above while throwing away the live document the
-  // retained-frame runtime exists to preserve.
-  it('keeps the live document when the save was mirrored by the bridge', async () => {
-    const { saveTextThroughPanel } = await openManualEdit();
+  // The other direction, and the reason this cannot be fixed by reloading
+  // unconditionally: a save the document applied keeps its document, with the
+  // JS heap, timers, canvas and scroll the retained-frame runtime exists to
+  // preserve.
+  it('keeps the live document when the document applied the save', async () => {
+    const { saveTextThroughPanel } = await openManualEdit(true);
     const before = liveSessionId();
 
     await saveTextThroughPanel(textTarget(), 'Hero EDIT1');
 
     expect(syntheticPreviewFileSource(PROJECT_ID, FILE_NAME)).toContain('Hero EDIT1');
+    expect(liveSessionId()).toBe(before);
+  });
+
+  // A link save the document applied is the ordinary path once `set-link` has
+  // a mirror: the persisted label reaches the DOM and the document survives.
+  it('keeps the live document when the document applied a link save', async () => {
+    const { saveTextThroughPanel } = await openManualEdit(true);
+    const before = liveSessionId();
+
+    await saveTextThroughPanel(linkTarget(), 'View tokens EDIT1');
+
+    expect(syntheticPreviewFileSource(PROJECT_ID, FILE_NAME)).toContain('View tokens EDIT1');
     expect(liveSessionId()).toBe(before);
   });
 });

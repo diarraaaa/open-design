@@ -414,6 +414,11 @@ type DeployResultCard = {
   message?: string;
 };
 const MAX_BRIDGE_COORDINATE = 1_000_000;
+// How long a Manual Edit mirror waits for the preview document to say whether
+// it applied. Same budget as the runtime-state handoff; a same-realm answer
+// arrives in a task, so this only ever elapses when nothing is listening —
+// which is itself the answer, and one the host must fail closed on.
+const MANUAL_EDIT_PREVIEW_MIRROR_TIMEOUT_MS = 500;
 // Powered-preview iframe attributes. `allow-same-origin` is what makes real
 // Workers / Web Storage / SharedArrayBuffer possible; it is safe here because
 // the powered iframe loads from the daemon's preview-only loopback host, which
@@ -8358,6 +8363,7 @@ function HtmlViewer({
   // document the bridge is keeping current — and neither claim survives a save
   // the bridge did not carry. Reset on the session boundary below.
   const manualEditLiveDocumentDivergedRef = useRef(false);
+  const manualEditPreviewMirrorSequenceRef = useRef(0);
   const manualEditSessionActive = manualEditMode || manualEditSrcDocActive;
   useEffect(() => {
     // Divergence belongs to one editing session. This runs after the render
@@ -12560,19 +12566,53 @@ function HtmlViewer({
     win.postMessage({ type: 'od-edit-preview-style', id, styles, version }, '*');
     return true;
   }, [workspaceActive]);
-  const previewTextToIframe = useCallback((id: string, value: string): boolean => {
-    if (!workspaceActive) return false;
+  /**
+   * Mirror one persisted patch into the live preview document and report what
+   * the document actually did with it.
+   *
+   * Posting is not applying. Every mirror handler in the bridge can refuse —
+   * the target is gone, a link carries markup too ambiguous to relabel, an
+   * element the author forced to `data-od-edit="text"` turns out to have
+   * children — and it refuses silently. A host that treats "I sent it" as "it
+   * landed" then freezes a document it believes is current, which is how a
+   * save becomes invisible. So the bridge answers, and an answer that does not
+   * arrive counts as a refusal: failing closed costs one document reload,
+   * failing open costs the user their edit on screen.
+   */
+  const mirrorManualEditToIframe = useCallback((
+    message: { type: string; id: string } & Record<string, unknown>,
+  ): Promise<boolean> => {
+    if (!workspaceActive) return Promise.resolve(false);
     const win = iframeRef.current?.contentWindow;
-    if (!win) return false;
-    win.postMessage({ type: 'od-edit-preview-text', id, value }, '*');
-    return true;
-  }, [workspaceActive]);
-  const previewOuterHtmlToIframe = useCallback((id: string, html: string): boolean => {
-    if (!workspaceActive) return false;
-    const win = iframeRef.current?.contentWindow;
-    if (!win) return false;
-    win.postMessage({ type: 'od-edit-preview-outer-html', id, html }, '*');
-    return true;
+    if (!win) return Promise.resolve(false);
+    manualEditPreviewMirrorSequenceRef.current += 1;
+    const requestId = `edit-mirror-${Date.now()}-${manualEditPreviewMirrorSequenceRef.current}`;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (applied: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        resolve(applied);
+      };
+      const onMessage = (event: MessageEvent) => {
+        if (event.source !== win) return;
+        const data = event.data as {
+          type?: unknown;
+          requestId?: unknown;
+          applied?: unknown;
+        } | null;
+        if (data?.type !== 'od-edit-preview:applied' || data.requestId !== requestId) return;
+        finish(data.applied === true);
+      };
+      const timeout = window.setTimeout(
+        () => finish(false),
+        MANUAL_EDIT_PREVIEW_MIRROR_TIMEOUT_MS,
+      );
+      window.addEventListener('message', onMessage);
+      win.postMessage({ ...message, requestId }, '*');
+    });
   }, [workspaceActive]);
 
   function postSelectedManualEditTargetToIframe(id: string | null, target: HTMLIFrameElement | null = iframeRef.current) {
@@ -13555,7 +13595,21 @@ function HtmlViewer({
     else setManualEditPageStylesOpen(false);
   }
 
-  function syncRetainedManualEditDocument(savedSource: string, patch: ManualEditPatch): void {
+  /**
+   * Carry a persisted patch into the document the user is looking at.
+   *
+   * Every value mirrored here is read back out of the bytes that were written
+   * to disk, never taken from the patch, so "the live DOM equals the saved
+   * source" is a claim about the file and not about our intent.
+   *
+   * `set-token`, `set-attributes` and `set-full-source` have no mirror. They
+   * fall through as unmirrored, which marks the session diverged and lets the
+   * ordinary document refresh show the save instead.
+   */
+  async function syncRetainedManualEditDocument(
+    savedSource: string,
+    patch: ManualEditPatch,
+  ): Promise<void> {
     // The write has committed. Refresh the hidden canonical URL exactly once
     // for this persisted revision; keystrokes and live preview messages do not
     // navigate it.
@@ -13564,11 +13618,48 @@ function HtmlViewer({
     if (patch.kind === 'set-text') {
       const savedText = readManualEditFields(savedSource, patch.id).text;
       liveDocumentMatchesSavedSource = savedText !== undefined
-        && previewTextToIframe(patch.id, savedText);
+        && await mirrorManualEditToIframe({
+          type: 'od-edit-preview-text',
+          id: patch.id,
+          value: savedText,
+        });
+    } else if (patch.kind === 'set-link') {
+      const savedFields = readManualEditFields(savedSource, patch.id);
+      liveDocumentMatchesSavedSource = savedFields.text !== undefined
+        && savedFields.href !== undefined
+        && await mirrorManualEditToIframe({
+          type: 'od-edit-preview-link',
+          id: patch.id,
+          text: savedFields.text,
+          href: savedFields.href,
+        });
+    } else if (patch.kind === 'set-image') {
+      const savedFields = readManualEditFields(savedSource, patch.id);
+      liveDocumentMatchesSavedSource = savedFields.src !== undefined
+        && savedFields.alt !== undefined
+        && await mirrorManualEditToIframe({
+          type: 'od-edit-preview-image',
+          id: patch.id,
+          src: savedFields.src,
+          alt: savedFields.alt,
+        });
+    } else if (patch.kind === 'remove-element') {
+      // The mirror matches the save only if the element really is gone from
+      // the persisted bytes; anything else means the patch did not remove
+      // what the user selected.
+      liveDocumentMatchesSavedSource = readManualEditOuterHtml(savedSource, patch.id).length === 0
+        && await mirrorManualEditToIframe({
+          type: 'od-edit-preview-remove',
+          id: patch.id,
+        });
     } else if (patch.kind === 'set-outer-html') {
       const savedOuterHtml = readManualEditOuterHtml(savedSource, patch.id);
       liveDocumentMatchesSavedSource = savedOuterHtml.length > 0
-        && previewOuterHtmlToIframe(patch.id, savedOuterHtml);
+        && await mirrorManualEditToIframe({
+          type: 'od-edit-preview-outer-html',
+          id: patch.id,
+          html: savedOuterHtml,
+        });
     } else if (patch.kind === 'set-style') {
       const targetStillExists = patch.id === '__body__'
         || Boolean(readManualEditOuterHtml(savedSource, patch.id));
@@ -13785,12 +13876,11 @@ function HtmlViewer({
       if (patch.kind === 'set-style') {
         reconcileManualEditStyleSave(patch.id, patch.styles, result.source);
       }
-      // Text and style edits already changed the live DOM through the edit
-      // bridge. Adopt that exact persisted source revision so the watcher echo
-      // does not navigate an equivalent srcDoc over the visible document.
-      // Other content patches still take one normal document refresh because
-      // they do not yet have a live bridge equivalent.
-      syncRetainedManualEditDocument(result.source, patch);
+      // Mirror the persisted bytes into the document the user is looking at,
+      // and only adopt that revision if the bridge says they landed. A patch
+      // with no mirror, or one the document refused, takes the ordinary
+      // refresh instead so the save is never invisible.
+      await syncRetainedManualEditDocument(result.source, patch);
       setManualEditError(null);
       finish('success');
       await onFileSaved?.();

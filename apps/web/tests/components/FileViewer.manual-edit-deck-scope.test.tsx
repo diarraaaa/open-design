@@ -9,6 +9,7 @@ import type { ProjectFile } from '../../src/types';
 import {
   installFileViewerPreviewRuntimeHarness,
   prepareSettledFileViewerFixture,
+  spyOnManualEditMirrors,
   syntheticPreviewFileSource,
   uninstallFileViewerPreviewRuntimeHarness,
   useSyntheticProjectScopedPreviewNavigation,
@@ -202,7 +203,7 @@ describe('leaving Manual Edit does not provision the document twice', () => {
     await enterManualEditMode();
     await selectManualEditTarget();
     const frame = await previewFrame();
-    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const postMessage = spyOnManualEditMirrors(frame);
     const textarea = document.querySelector('.manual-edit-right textarea') as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'Hero edited' } });
     fireEvent.click(screen.getByText('Save'));
@@ -213,11 +214,11 @@ describe('leaving Manual Edit does not provision the document twice', () => {
       );
       // The latch is only set once the bridge confirms the live DOM now holds
       // the saved bytes; without this the test would measure an unlatched exit.
-      expect(postMessage).toHaveBeenCalledWith({
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
         type: 'od-edit-preview-text',
         id: 'hero',
         value: 'Hero edited',
-      }, '*');
+      }), '*');
     });
 
     fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));

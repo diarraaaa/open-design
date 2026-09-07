@@ -213,6 +213,41 @@ function discoverRuntimeFrames(): void {
   }
 }
 
+/**
+ * Spy on a preview frame's postMessage and answer Manual Edit mirror requests
+ * the way the injected edit bridge does.
+ *
+ * The host will not keep the live document on a save unless the document says
+ * it applied the mirror, so a test that means "the bridge carried the save"
+ * has to answer — a silent double is a document that refused, and the correct
+ * product response to that is to replace the document. Pass `false` to model
+ * exactly that refusal.
+ */
+export function spyOnManualEditMirrors(frame: HTMLIFrameElement, applies = true) {
+  const win = frame.contentWindow!;
+  const spy = vi.spyOn(win, 'postMessage');
+  // Spying twice on one window returns the SAME spy, so the previous
+  // implementation has to be layered on rather than replaced — the runtime
+  // harness installs its own on every standby frame, and dropping it strands
+  // the preview handshake.
+  const previous = spy.getMockImplementation();
+  spy.mockImplementation(((message: unknown, ...rest: unknown[]) => {
+    (previous as ((...args: unknown[]) => void) | undefined)?.(message, ...rest);
+    const data = message as { requestId?: unknown; id?: unknown } | null;
+    if (typeof data?.requestId !== 'string') return;
+    window.dispatchEvent(new MessageEvent('message', {
+      data: {
+        type: 'od-edit-preview:applied',
+        requestId: data.requestId,
+        id: data.id ?? '',
+        applied: applies,
+      },
+      source: win,
+    }));
+  }) as Window['postMessage']);
+  return spy;
+}
+
 export function installFileViewerPreviewRuntimeHarness(): void {
   observer?.disconnect();
   resetFixtureState();

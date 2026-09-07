@@ -99,6 +99,7 @@ import { I18nProvider } from '../../src/i18n';
 import type { Dict } from '../../src/i18n/types';
 import { emptyManualEditStyles } from '../../src/edit-mode/types';
 import { __resetPreviewIsolationCache } from '../../src/runtime/powered-preview';
+import { spyOnManualEditMirrors } from '../helpers/file-viewer-preview-runtime';
 import { installPreviewIframeMessageObserver } from '../../src/observability/iframe-error';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
 import { resetWorkspaceContextCache } from '../../src/collab/useWorkspaceContext';
@@ -8082,7 +8083,7 @@ describe('FileViewer tweaks toolbar', () => {
       `http://n-${sessionId}.localhost:43111/preview.html`,
       `${sessionId}.0`,
     );
-    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const postMessage = spyOnManualEditMirrors(frame);
     const baseCapabilities: PreviewRuntimeCapability[] = [
       'content_measurement',
       'scroll',
@@ -8295,11 +8296,11 @@ describe('FileViewer tweaks toolbar', () => {
     await waitFor(() => {
       expect(savedSources.at(-1)).toContain('Edited Hero');
     });
-    expect(postMessage).toHaveBeenCalledWith({
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'od-edit-preview-text',
       id: 'hero',
       value: 'Edited Hero',
-    }, '*');
+    }), '*');
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(initialSrc);
 
