@@ -5,6 +5,18 @@ import { describe, expect, it } from "vitest";
 import { inspectElectronCdpStatus } from "../scripts/cdp-inspection.ts";
 
 describe("Electron Shell native CDP inspection", () => {
+  it("preserves lifecycle inspection when the native endpoint closes during discovery", async () => {
+    const server = createServer((_request, response) => response.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (address == null || typeof address === "string") throw new Error("fixture address is unavailable");
+      const discoveryUrl = `http://127.0.0.1:${address.port}`;
+      await expect(inspectElectronCdpStatus({ cdp: { state: "ready", discoveryUrl } })).resolves.toMatchObject({
+        discovery: { state: "unavailable", discoveryUrl, error: expect.any(String) }, targets: [],
+      });
+    } finally { await new Promise<void>((resolve, reject) => server.close(error => error == null ? resolve() : reject(error))); }
+  });
   it("reports a disabled surface without probing the network", async () => {
     await expect(inspectElectronCdpStatus({ state: "ready", cdp: { state: "disabled" } }))
       .resolves.toEqual({ discovery: { state: "disabled" }, targets: [] });

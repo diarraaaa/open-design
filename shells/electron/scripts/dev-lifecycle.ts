@@ -13,6 +13,7 @@ import { materializeElectronDevInstallation } from "./dev-installation.ts";
 import { inspectElectronCdpStatus } from "./cdp-inspection.ts";
 import { observeElectronDiagnostics } from "./runtime-diagnostics.ts";
 import { waitForElectronProductReady } from "./product-readiness.ts";
+import { electronGracefulStopOptions } from "./shutdown-policy.ts";
 
 export const ELECTRON_DEV_LIFECYCLE_SCHEMA_VERSION = 1 as const;
 
@@ -148,7 +149,7 @@ export async function executeElectronDevLifecycle(request: ElectronDevLifecycleR
     const current = await getSidecarStatus(stamp(request), { timeoutMs: 1_000 }).catch(() => null);
     return Object.freeze({ operation: request.operation, schemaVersion: 1 as const, shell: Object.freeze({ type: "electron" as const, channel: request.channel, namespace: request.namespace }), status: await observeElectronDiagnostics(request.controlRuntimeRoot, current) });
   }
-  const stopped = await stopSidecar(stamp(request));
+  const stopped = await stopSidecar(stamp(request), electronGracefulStopOptions);
   return Object.freeze({ operation: request.operation, schemaVersion: 1 as const, shell: Object.freeze({ type: "electron" as const, channel: request.channel, namespace: request.namespace }), stopped });
 }
 

@@ -69,6 +69,7 @@ import {
 } from "./physical-resources.js";
 import { withElectronPhysicalResourceSetGuard } from "./guarded-lifecycle.js";
 import { projectElectronRuntimeStatus as projectRuntimeStatus } from "./runtime-status.js";
+import { retireElectronOrphanedRuntime } from "./orphan-recovery.js";
 import { StandaloneHostLifecycle } from "@open-design/standalone";
 import { StandaloneHostLifecycleLedger } from "@open-design/standalone";
 import {
@@ -310,6 +311,7 @@ export function createElectronStandaloneAuthorityFactory(
       };
       const initialResourceSet = bindElectronPhysicalResourceSet(resources, binding);
       const initialStamp = initialResourceSet.resources.find(({ id }) => id === runtimeResource.id)!.stamp;
+      const lifecycleLedger = new StandaloneHostLifecycleLedger(storeRoot, request.scope);
       let activeHost!: Awaited<ReturnType<typeof launchHost>>;
       await withElectronPhysicalResourceSetGuard(initialResourceSet, async (guard) => {
         const existing = await getSidecarStatus<unknown>(initialStamp, { timeoutMs: 500 }).catch(() => null);
@@ -328,6 +330,8 @@ export function createElectronStandaloneAuthorityFactory(
             }
           }
           if (idle) await guard.retire();
+        } else if (!await retireElectronOrphanedRuntime({ stamp: initialStamp, scope: request.scope, ledger: lifecycleLedger, guard })) {
+          throw new Error("unresponsive Standalone host still has physical processes; cold start cannot replace it");
         }
         activeHost = await launchHost(binding, reuse);
       });
@@ -360,7 +364,6 @@ export function createElectronStandaloneAuthorityFactory(
         observeFeedback,
       );
       const updaterLedger = new ElectronStandaloneShellUpdaterLedger(storeRoot, request.scope, request.shell.type);
-      const lifecycleLedger = new StandaloneHostLifecycleLedger(storeRoot, request.scope);
       const installerClaimLedger = new ElectronStandaloneInstallerClaimLedger(storeRoot, request.scope);
       return Object.freeze({
         binding,
@@ -952,14 +955,21 @@ export function createElectronStandaloneAuthorityFactory(
                   return closed;
                 }
                 return await withElectronPhysicalResourceSetGuard(activeHost.resourceSet, async (guard) => {
-                  const current = await activeHost.lifecycle.status(request.scope);
+                  let current: LifecycleStatus;
+                  try { current = await activeHost.lifecycle.status(request.scope); }
+                  catch (error) {
+                    if (!await retireElectronOrphanedRuntime({ stamp: activeHost.stamp, scope: request.scope, ledger: lifecycleLedger, guard })) throw error;
+                    closed = Object.freeze({ state: "stopped" as const, bindingDigest: activeHost.binding.digest, generationId: activeGeneration.id, instanceId: started.instanceId!, references: 0 });
+                    activeAttachment = null;
+                    return closed;
+                  }
                   const ownGeneration = current.generationId === activeGeneration.id && current.bindingDigest === activeHost.binding.digest;
                   const ownsAttachment = ownGeneration && current.occupants.some(({ attachmentId }) => attachmentId === attachment.id);
                   const released = ownsAttachment ? await activeHost.lifecycle.release(request.scope, attachment.id) : current;
                   // Occupancy selects whether this caller may retire the set;
                   // only Sidecar's guarded retirement proves physical closure.
                   // Never kill a runtime retained by a sibling attachment.
-                  if (ownGeneration && released.occupants.length === 0) {
+                  if ((ownGeneration || released.state === "stopped") && released.occupants.length === 0) {
                     await guard.retire();
                     const continuation = new StandaloneHostLifecycle(request.scope, { statePort: lifecycleLedger });
                     const stopped = await continuation.status();

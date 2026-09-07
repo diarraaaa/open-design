@@ -3,6 +3,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 const sidecar = vi.hoisted(() => ({ stop: vi.fn(), find: vi.fn(), status: vi.fn() }));
 vi.mock("@open-design/sidecar", () => ({ stopSidecar: sidecar.stop, findSidecarProcesses: sidecar.find, getSidecarStatus: sidecar.status }));
 import { executeElectronRuntimeLifecycle } from "../scripts/runtime-lifecycle.ts";
+import { electronGracefulStopOptions } from "../scripts/shutdown-policy.ts";
+import { standaloneHostControlRequestTimeoutMs } from "@open-design/standalone";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -15,7 +17,8 @@ it.each([{ survivors: [] }, { survivors: [{ pid: 99 }] }])("reports physical sur
   expect(receipt).toMatchObject({ remainingPids: survivors.map(({ pid }) => pid) });
   expect(receipt).not.toHaveProperty("retainedStandaloneReferences");
   expect(sidecar.status).not.toHaveBeenCalled();
-  expect(sidecar.stop).toHaveBeenCalledExactlyOnceWith({ app: "electron", channel: "betahyx", mode: "runtime", namespace: "stop-test", source: "tools-pack" });
+  expect(sidecar.stop).toHaveBeenCalledExactlyOnceWith({ app: "electron", channel: "betahyx", mode: "runtime", namespace: "stop-test", source: "tools-pack" }, electronGracefulStopOptions);
+  expect(electronGracefulStopOptions.termGraceMs).toBeGreaterThan(standaloneHostControlRequestTimeoutMs({ operation: "lifecycle.release" }));
   expect(sidecar.find).toHaveBeenCalledTimes(4);
   for (const app of ["standalone", "daemon", "web", "electron-updater"]) {
     expect(sidecar.find).toHaveBeenCalledWith({ app, channel: "betahyx", mode: "runtime", namespace: "stop-test", source: "standalone" });

@@ -234,7 +234,7 @@ describe("Electron production Standalone authority", () => {
     });
     let stamp: ReturnType<typeof bindElectronPhysicalResourceSet>["resources"][number]["stamp"] | null = null;
     try {
-      const prepared = await authority.prepare({ correlationId: "authority-test", scope: { channel: manifest.channel, namespace: manifest.namespace }, shell: manifest.shell });
+      let prepared = await authority.prepare({ correlationId: "authority-test", scope: { channel: manifest.channel, namespace: manifest.namespace }, shell: manifest.shell });
       expect(prepared.generation.releaseVersion).toBe("0.1.0-betahyx.1");
       expect(prepared.generation.releaseVersion).not.toBe(manifest.version);
       stamp = bindElectronPhysicalResourceSet(physicalResources, prepared.binding).resources[0]!.stamp;
@@ -244,11 +244,23 @@ describe("Electron production Standalone authority", () => {
       expect(providerProcesses.length).toBeGreaterThan(0);
       expect(providerProcesses.every(({ pid }) => !hostProcesses.some((host) => host.pid === pid))).toBe(true);
       expect(await prepared.updater.readSnapshot()).toMatchObject({ state: "idle", shellType: "electron" });
-      const handle = await prepared.start({
+      let handle = await prepared.start({
         attachment: { id: "electron-test", shell: manifest.shell },
         capabilities: { async invoke(request) { return { requestId: request.requestId, attachmentId: request.attachmentId, bindingDigest: request.bindingDigest, outcome: "unsupported" }; } },
       });
       expect(await handle.readStatus()).toMatchObject({ state: "running", generationId: prepared.generation.id, bindingDigest: prepared.binding.digest });
+
+      const failedHost = await getSidecarStatus<{ hostPid: number }>(stamp);
+      process.kill(failedHost.hostPid, "SIGKILL");
+      await vi.waitFor(async () => { expect(await findSidecarProcesses(stamp!)).toEqual([]); });
+      await expect(handle.close()).resolves.toMatchObject({ state: "stopped", references: 0 });
+      expect(await findSidecarProcesses(providerStamp)).toEqual([]);
+      prepared = await authority.prepare({ correlationId: "host-loss-recovery", scope: { channel: manifest.channel, namespace: manifest.namespace }, shell: manifest.shell });
+      handle = await prepared.start({
+        attachment: { id: "electron-test", shell: manifest.shell },
+        capabilities: { async invoke(request) { return { requestId: request.requestId, attachmentId: request.attachmentId, bindingDigest: request.bindingDigest, outcome: "unsupported" }; } },
+      });
+      expect(await handle.readStatus()).toMatchObject({ state: "running", references: 1 });
 
       const incompatible = createElectronStandaloneAuthorityFactory(manifest, physicalResources, authorityOptions)({
         installedShellPath: join(root, "Current.app"),

@@ -1,5 +1,8 @@
 {
   "schemaVersion": 1,
+  "shutdown": {
+    "gracefulTimeoutMs": 75000
+  },
   "preflight": {
     "schemaVersion": 1,
     "atoms": [
