@@ -2108,10 +2108,25 @@ export function buildTracePayload(
       ctx.deliverableSyntax?.repairWindowDurationMs,
     deliverable_syntax_repair_to_delivery_duration_ms:
       ctx.deliverableSyntax?.repairToDeliveryDurationMs,
+    deliverable_syntax_repair_to_terminal_duration_ms:
+      ctx.deliverableSyntax?.repairToTerminalDurationMs,
+    deliverable_syntax_terminal_run_status: ctx.deliverableSyntax?.terminalRunStatus,
+    deliverable_syntax_finalization_action: ctx.deliverableSyntax?.finalization?.action,
+    deliverable_syntax_finalization_reason: ctx.deliverableSyntax?.finalization?.reason,
+    deliverable_syntax_finalization_refusal: ctx.deliverableSyntax?.finalization?.refusal,
+    deliverable_syntax_summary_version: ctx.deliverableSyntax?.finalization?.summaryVersion,
+    deliverable_syntax_initial_status: ctx.deliverableSyntax?.finalization?.initialStatus,
+    deliverable_syntax_repair_engine: ctx.deliverableSyntax?.finalization?.repairEngine,
+    deliverable_syntax_staged_patch_count: ctx.deliverableSyntax?.finalization?.stagedPatchCount,
+    deliverable_syntax_committed_patch_count: ctx.deliverableSyntax?.finalization?.committedPatchCount,
+    deliverable_syntax_committed_repair_rules:
+      ctx.deliverableSyntax?.finalization?.committedRepairRules?.join(','),
     deliverable_syntax_repair_executor: ctx.deliverableSyntax?.repairExecutor,
     deliverable_syntax_repair_duration_ms: ctx.deliverableSyntax?.repairDurationMs,
     deliverable_syntax_applied_repair_rules:
       ctx.deliverableSyntax?.appliedRepairRules?.join(','),
+    deliverable_syntax_safe_fix_proposal_count: ctx.deliverableSyntax?.safeFixProposalCount,
+    deliverable_syntax_safe_fix_proposal_duration_ms: ctx.deliverableSyntax?.safeFixProposalDurationMs,
     deliverable_syntax_repairable_check_count:
       ctx.deliverableSyntax?.repairableCheckCount,
     deliverable_syntax_initial_diagnostic_count:

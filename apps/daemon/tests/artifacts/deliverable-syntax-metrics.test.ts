@@ -63,7 +63,7 @@ describe('deliverable syntax timing metrics', () => {
     });
   });
 
-  it('records repair-to-delivery for repaired and exhausted Runs only', () => {
+  it('records an explicit repair-to-terminal alias without implying successful delivery', () => {
     const started = recordDeliverableSyntaxCheck({
       result: repairable,
       durationMs: 4,
@@ -74,6 +74,7 @@ describe('deliverable syntax timing metrics', () => {
       terminalAtMs: 2_900,
     })).toMatchObject({
       repairToDeliveryDurationMs: 900,
+      repairToTerminalDurationMs: 900,
     });
 
     const neverTriggered = recordDeliverableSyntaxCheck({
@@ -85,5 +86,9 @@ describe('deliverable syntax timing metrics', () => {
       previous: neverTriggered,
       terminalAtMs: 3_100,
     }).repairToDeliveryDurationMs).toBeUndefined();
+    expect(recordDeliverableSyntaxCheck({
+      previous: recordDeliverableSyntaxDelivery({ previous: started, terminalAtMs: 2_900 }),
+      result: pass, durationMs: 2, checkedAtMs: 3_000,
+    })).toMatchObject({ repairToDeliveryDurationMs: 900, repairToTerminalDurationMs: 900 });
   });
 });

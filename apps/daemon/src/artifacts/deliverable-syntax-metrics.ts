@@ -56,12 +56,21 @@ export function recordDeliverableSyntaxCheck(input: {
     ...(previous?.repairToDeliveryDurationMs !== undefined
       ? { repairToDeliveryDurationMs: previous.repairToDeliveryDurationMs }
       : {}),
+    ...(previous?.repairToTerminalDurationMs !== undefined
+      ? { repairToTerminalDurationMs: previous.repairToTerminalDurationMs }
+      : {}),
     ...(previous?.repairExecutor ? { repairExecutor: previous.repairExecutor } : {}),
     ...(previous?.repairDurationMs !== undefined
       ? { repairDurationMs: previous.repairDurationMs }
       : {}),
     ...(previous?.appliedRepairRules
       ? { appliedRepairRules: previous.appliedRepairRules }
+      : {}),
+    ...(previous?.safeFixProposalCount !== undefined
+      ? { safeFixProposalCount: previous.safeFixProposalCount }
+      : {}),
+    ...(previous?.safeFixProposalDurationMs !== undefined
+      ? { safeFixProposalDurationMs: previous.safeFixProposalDurationMs }
       : {}),
   };
 }
@@ -92,11 +101,12 @@ export function recordDeliverableSyntaxDelivery(input: {
 }): DeliverableSyntaxMetrics {
   const firstRepairableAtMs = input.previous.firstRepairableAtMs;
   if (firstRepairableAtMs === undefined) return input.previous;
+  const repairToTerminalDurationMs = Math.max(
+    0, finiteNonNegative(input.terminalAtMs) - firstRepairableAtMs,
+  );
   return {
     ...input.previous,
-    repairToDeliveryDurationMs: Math.max(
-      0,
-      finiteNonNegative(input.terminalAtMs) - firstRepairableAtMs,
-    ),
+    repairToDeliveryDurationMs: repairToTerminalDurationMs,
+    repairToTerminalDurationMs,
   };
 }

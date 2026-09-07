@@ -3,11 +3,13 @@ import {
   type DeliverableSyntaxSafeFixRule,
 } from '@open-design/contracts';
 import { load } from 'cheerio';
+import { parse as parseJavaScript, type Token } from 'acorn';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { DeliverableSyntaxResult } from './deliverable-syntax.js';
+import { proposeLocalStringQuotePatch } from './deliverable-syntax-quotes.js';
 
 export interface DeliverableSyntaxSafeFixPatch {
   content: string;
@@ -16,6 +18,10 @@ export interface DeliverableSyntaxSafeFixPatch {
   mode: number;
   rule: DeliverableSyntaxSafeFixRule;
   targetPath: string;
+  /** Inserted/replaced characters in this local proposal, not its file size. */
+  editCount: number;
+  /** Valid only for these exact staged bytes; never persisted or shared across Runs. */
+  sourceSegment: SourceSegment;
 }
 
 export type DeliverableSyntaxSafeFixProposal =
@@ -210,13 +216,61 @@ function insertAt(source: string, offset: number, value: string): string {
   return `${source.slice(0, offset)}${value}${source.slice(offset)}`;
 }
 
+/**
+ * Read grouping tokens from a real parser, not characters in regex/string
+ * literals. Only use the prefix when Acorn agrees with the checker's exact
+ * failure position. Parser disagreement (including unsupported syntax) fails
+ * closed. Template interpolation boundaries are not repair candidates.
+ */
+function delimiterAtError(source: string, offset: number): '(' | '[' | '{' | null {
+  const tokens: Token[] = [];
+  try {
+    parseJavaScript(source, {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      allowReturnOutsideFunction: true,
+      onToken: tokens,
+    });
+    return null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError) || (error as SyntaxError & { pos?: number }).pos !== offset) {
+      return null;
+    }
+  }
+  const stack: Array<'(' | '[' | '{' | '${'> = [];
+  for (const token of tokens) {
+    if (token.start >= offset) break;
+    if (token.end > offset) return null;
+    const label = token.type.label;
+    if (label === '(' || label === '[' || label === '{' || label === '${') {
+      stack.push(label);
+    } else if (label === ')' || label === ']' || label === '}') {
+      const open = stack.pop();
+      if (!open || (open === '${' ? '}' : CLOSING_DELIMITER[open]) !== label) return null;
+    }
+  }
+  const open = stack.at(-1);
+  return open && open !== '${' ? open : null;
+}
+
 function proposePatch(input: {
   diagnostic: DeliverableSyntaxDiagnostic;
   segment: SourceSegment;
   source: string;
-}): { content: string; rule: DeliverableSyntaxSafeFixRule } | null {
+}): { content: string; rule: DeliverableSyntaxSafeFixRule; editCount?: number } | null {
   const { diagnostic, segment, source } = input;
   const segmentText = source.slice(segment.start, segment.end);
+  const quoteOffset = diagnostic.line !== null && diagnostic.column !== null
+    ? offsetAt(source, diagnostic.line, diagnostic.column) : null;
+  if (quoteOffset !== null && quoteOffset >= segment.start && quoteOffset <= segment.end) {
+    const quoted = proposeLocalStringQuotePatch(segmentText, quoteOffset - segment.start, diagnostic.code);
+    if (quoted) {
+      return {
+        ...quoted,
+        content: source.slice(0, segment.start) + quoted.content + source.slice(segment.end),
+      };
+    }
+  }
   if (diagnostic.code === 'JS_UNTERMINATED_COMMENT') {
     const scan = scanJavaScript(segmentText, segmentText.length);
     return scan?.state === 'block_comment'
@@ -242,6 +296,9 @@ function proposePatch(input: {
       || (scan.state !== 'single_quote' && scan.state !== 'double_quote')
       || scan.stringOpenedAt === null
       || /[\r\n]/u.test(segmentText.slice(scan.stringOpenedAt))
+      // Do not turn a refused quote-conflict candidate into a larger string
+      // by appending a quote after operators or an existing opposite quote.
+      || /['"`\\+;(){}=]/u.test(segmentText.slice(scan.stringOpenedAt + 1))
     ) {
       return null;
     }
@@ -266,9 +323,7 @@ function proposePatch(input: {
     return null;
   }
   const localOffset = absoluteDiagnosticOffset - segment.start;
-  const scan = scanJavaScript(segmentText, localOffset);
-  if (!scan || scan.state !== 'base') return null;
-  const open = scan.delimiterStack.at(-1);
+  const open = delimiterAtError(segmentText, localOffset);
   if (!open) return null;
   const current = segmentText[localOffset];
   if (current !== undefined && !/^[,;\)\]\}]$/u.test(current)) return null;
@@ -285,6 +340,7 @@ function proposePatch(input: {
  */
 export async function proposeDeliverableSyntaxSafeFix(input: {
   contentOverrides?: ReadonlyMap<string, string>;
+  previousPatch?: DeliverableSyntaxSafeFixPatch;
   projectRoot: string;
   result: Extract<DeliverableSyntaxResult, { status: 'repairable' }>;
 }): Promise<DeliverableSyntaxSafeFixProposal> {
@@ -322,7 +378,17 @@ export async function proposeDeliverableSyntaxSafeFix(input: {
   }
 
   const source = input.contentOverrides?.get(diagnostic.file) ?? diskContent;
-  const segment = sourceSegment(source, diagnostic);
+  const previous = input.previousPatch;
+  const diagnosticOffset = diagnostic.line !== null && diagnostic.column !== null
+    ? offsetAt(source, diagnostic.line, diagnostic.column) : null;
+  // Syntax-only proposals never change HTML tag boundaries. Reuse the last
+  // segment only for the identical in-memory candidate and a diagnostic inside
+  // it; otherwise locate it from the complete HTML again. The strict checker
+  // still reparses the entire deliverable on every iteration.
+  const segment = previous?.file === diagnostic.file && previous.content === source
+    && diagnosticOffset !== null && diagnosticOffset >= previous.sourceSegment.start
+    && diagnosticOffset <= previous.sourceSegment.end
+    ? previous.sourceSegment : sourceSegment(source, diagnostic);
   if (!segment) return { action: 'none', reason: 'unsupported_syntax_error' };
   const proposed = proposePatch({ diagnostic, segment, source });
   if (!proposed || proposed.content === source) {
@@ -337,6 +403,11 @@ export async function proposeDeliverableSyntaxSafeFix(input: {
       mode,
       rule: proposed.rule,
       targetPath: targetReal,
+      editCount: proposed.editCount ?? Math.abs(proposed.content.length - source.length),
+      sourceSegment: {
+        start: segment.start,
+        end: segment.end + proposed.content.length - source.length,
+      },
     },
   };
 }

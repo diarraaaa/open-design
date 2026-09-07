@@ -15754,12 +15754,17 @@ export async function startServer({
                 syntaxFinalization.validation.metrics?.repairDurationMs ?? null,
               appliedRepairRules:
                 syntaxFinalization.validation.metrics?.appliedRepairRules ?? [],
+              finalization: syntaxFinalization.validation.finalization,
+              safeFixProposalCount: syntaxFinalization.validation.metrics?.safeFixProposalCount ?? null,
+              safeFixProposalDurationMs: syntaxFinalization.validation.metrics?.safeFixProposalDurationMs ?? null,
             });
           }
           if (syntaxFinalization.action === 'fail') {
             send('error', createSseErrorPayload(
               'AGENT_EXECUTION_FAILED',
-              `Final Web deliverable still has a syntax error at ${syntaxFinalization.location}. Deterministic host repair stopped: ${syntaxFinalization.reason}.`,
+              syntaxFinalization.reason === 'check_incomplete'
+                ? `Final Web deliverable syntax check is incomplete at ${syntaxFinalization.location}; delivery blocked.`
+                : `Final Web deliverable still has a syntax error at ${syntaxFinalization.location}. Deterministic host repair stopped: ${syntaxFinalization.reason}.`,
               { retryable: false },
             ));
             finishStrategyAwarePhysicalRun('failed', 1, signal);

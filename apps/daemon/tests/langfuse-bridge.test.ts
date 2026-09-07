@@ -149,6 +149,11 @@ describe('langfuse-bridge deliverable syntax telemetry', () => {
         diagnostics: [],
         source: 'run_finalizer',
         checkedAt: 123,
+        finalization: {
+          action: 'allow', summaryVersion: 1, initialStatus: 'repairable',
+          repairEngine: 'host-safe-fixer@2', stagedPatchCount: 2, committedPatchCount: 2,
+          committedRepairRules: ['insert_missing_closing_delimiter'],
+        },
         metrics: {
           schema: 'open-design.deliverable-syntax-metrics/v1',
           checkCount: 3,
@@ -160,9 +165,12 @@ describe('langfuse-bridge deliverable syntax telemetry', () => {
           repairPassedAtMs: 1_650,
           repairWindowDurationMs: 650,
           repairToDeliveryDurationMs: 900,
+          repairToTerminalDurationMs: 900,
           repairExecutor: 'host_safe_fixer',
           repairDurationMs: 8,
           appliedRepairRules: ['insert_missing_closing_delimiter'],
+          safeFixProposalCount: 2,
+          safeFixProposalDurationMs: 6,
         },
       },
     }))).toEqual({
@@ -176,15 +184,24 @@ describe('langfuse-bridge deliverable syntax telemetry', () => {
       checkerDurationMs: 16,
       repairWindowDurationMs: 650,
       repairToDeliveryDurationMs: 900,
+      repairToTerminalDurationMs: 900,
+      terminalRunStatus: 'succeeded',
+      finalization: {
+        action: 'allow', summaryVersion: 1, initialStatus: 'repairable',
+        repairEngine: 'host-safe-fixer@2', stagedPatchCount: 2, committedPatchCount: 2,
+        committedRepairRules: ['insert_missing_closing_delimiter'],
+      },
       repairExecutor: 'host_safe_fixer',
       repairDurationMs: 8,
       appliedRepairRules: ['insert_missing_closing_delimiter'],
+      safeFixProposalCount: 2,
+      safeFixProposalDurationMs: 6,
       repairableCheckCount: 2,
       initialDiagnosticCount: 1,
       latestDiagnosticCount: 0,
       repairTriggered: true,
       repairAttempts: 2,
-      maxRepairAttempts: 3,
+      maxRepairAttempts: 8,
       repairOutcome: 'repaired',
       recoveredDeliveryCount: 1,
       blockedBrokenDeliveryCount: 0,
@@ -216,12 +233,138 @@ describe('langfuse-bridge deliverable syntax telemetry', () => {
         }],
         source: 'run_finalizer',
         checkedAt: 123,
+        finalization: { action: 'fail', reason: 'attempt_limit_reached' },
       },
     }))).toMatchObject({
       repairOutcome: 'exhausted',
       recoveredDeliveryCount: 0,
       blockedBrokenDeliveryCount: 1,
     });
+  });
+
+  const terminalEvidence = () => ({
+    schema: 'open-design.deliverable-syntax-tool/v1' as const,
+    status: 'pass' as const, checker: 'web-syntax@1' as const,
+    candidateHash: 'private-hash', checkedFiles: ['/private/index.html'], diagnostics: [],
+    source: 'run_finalizer' as const, checkedAt: 123,
+    finalization: {
+      action: 'allow' as const, summaryVersion: 1 as const, initialStatus: 'repairable' as const,
+      repairEngine: 'host-safe-fixer@2' as const, stagedPatchCount: 1, committedPatchCount: 1,
+      committedRepairRules: ['normalize_mismatched_string_quote' as const],
+    },
+    metrics: {
+      schema: 'open-design.deliverable-syntax-metrics/v1' as const,
+      checkCount: 2, checkerDurationMs: 10, repairableCheckCount: 1,
+      initialDiagnosticCount: 1, latestDiagnosticCount: 0, repairExecutor: 'host_safe_fixer' as const,
+    },
+  });
+
+  it.each(['commit_conflict', 'commit_failed', 'repair_budget_exceeded'] as const)(
+    'does not report recovered delivery for a passing staged candidate with %s', (reason) => {
+      const evidence = terminalEvidence();
+      expect(projectDeliverableSyntaxTelemetry({
+        status: 'failed', deliverableSyntaxValidation: {
+          ...evidence, finalization: {
+            ...evidence.finalization, action: 'fail', reason,
+            committedPatchCount: 0, committedRepairRules: [],
+          },
+        },
+      })).toMatchObject({
+        status: 'pass', terminalRunStatus: 'failed', repairOutcome: 'unresolved',
+        recoveredDeliveryCount: 0, blockedBrokenDeliveryCount: 1,
+      });
+    },
+  );
+
+  it('keeps old Host commit evidence unknown and never invents a verified recovery', () => {
+    const { finalization: _unused, ...oldEvidence } = terminalEvidence();
+    const result = projectDeliverableSyntaxTelemetry({ status: 'succeeded', deliverableSyntaxValidation: oldEvidence });
+    expect(result).toMatchObject({ repairOutcome: 'unresolved', recoveredDeliveryCount: 0 });
+    expect(result).not.toHaveProperty('finalization');
+  });
+
+  it.each([
+    { repairEngine: undefined }, { stagedPatchCount: undefined },
+    { committedPatchCount: undefined }, { committedRepairRules: undefined },
+    { stagedPatchCount: -1 }, { stagedPatchCount: 1.5 }, { stagedPatchCount: 9 },
+    { committedPatchCount: -1 }, { committedPatchCount: 2 },
+    { committedRepairRules: [] },
+    { committedRepairRules: ['private-unknown-rule'] },
+  ])('keeps partial/contradictory version-1 evidence unresolved: %j', (partial) => {
+    const evidence = terminalEvidence();
+    const result = projectDeliverableSyntaxTelemetry({
+      status: 'succeeded', deliverableSyntaxValidation: {
+        ...evidence,
+        finalization: { ...evidence.finalization, ...partial } as typeof evidence.finalization,
+      },
+    });
+    expect(result).toMatchObject({ repairOutcome: 'unresolved', recoveredDeliveryCount: 0 });
+    expect(JSON.stringify(result)).not.toContain('private-unknown-rule');
+  });
+
+  it('preserves the old timing as a terminal alias without inventing a recovery', () => {
+    const { finalization: _unused, ...evidence } = terminalEvidence();
+    expect(projectDeliverableSyntaxTelemetry({ status: 'failed', deliverableSyntaxValidation: {
+      ...evidence, metrics: { ...evidence.metrics, repairToDeliveryDurationMs: 73 },
+    } })).toMatchObject({
+      repairToTerminalDurationMs: 73, repairToDeliveryDurationMs: 73, recoveredDeliveryCount: 0,
+    });
+  });
+
+  it('does not downgrade an unknown summary version into legacy Agent recovery', () => {
+    const evidence = terminalEvidence();
+    expect(projectDeliverableSyntaxTelemetry({
+      status: 'succeeded', deliverableSyntaxValidation: {
+        ...evidence, source: 'agent_tool', repair: { action: 'none', attempt: 1, maxAttempts: 3 },
+        metrics: { ...evidence.metrics, repairExecutor: 'agent' },
+        finalization: { ...evidence.finalization, summaryVersion: 2 as 1 },
+      },
+    })).toMatchObject({ repairOutcome: 'unresolved', recoveredDeliveryCount: 0 });
+  });
+
+  it('does not attribute prior Agent repairs to a Host check that initially passed', () => {
+    const evidence = terminalEvidence();
+    expect(projectDeliverableSyntaxTelemetry({
+      status: 'succeeded', deliverableSyntaxValidation: {
+        ...evidence, finalization: {
+          ...evidence.finalization, initialStatus: 'pass', stagedPatchCount: 0,
+          committedPatchCount: 0, committedRepairRules: [],
+        },
+      },
+    })).toMatchObject({ repairOutcome: 'not_needed', recoveredDeliveryCount: 0 });
+  });
+
+  it('requires a successful physical terminal and strips non-whitelisted summary data', () => {
+    const evidence = terminalEvidence();
+    const result = projectDeliverableSyntaxTelemetry({
+      status: 'canceled', deliverableSyntaxValidation: {
+        ...evidence, finalization: {
+          ...evidence.finalization, committedRepairRules: [...evidence.finalization.committedRepairRules],
+          ...{ source: '<script>private</script>', path: '/private/index.html' },
+        },
+      },
+    });
+    expect(result).toMatchObject({ repairOutcome: 'unresolved', recoveredDeliveryCount: 0 });
+    expect(JSON.stringify(result)).not.toMatch(/private|script|candidateHash/);
+  });
+
+  it('counts an explicit syntax refusal as blocked, but not an incomplete check', () => {
+    const evidence = terminalEvidence();
+    expect(projectDeliverableSyntaxTelemetry({
+      status: 'failed', deliverableSyntaxValidation: {
+        ...evidence, status: 'repairable', finalization: {
+          ...evidence.finalization, action: 'fail', reason: 'no_safe_fix',
+          refusal: 'unsupported_syntax_error', committedPatchCount: 0, committedRepairRules: [],
+        },
+      },
+    })).toMatchObject({ blockedBrokenDeliveryCount: 1, recoveredDeliveryCount: 0 });
+    expect(projectDeliverableSyntaxTelemetry({
+      status: 'failed', deliverableSyntaxValidation: {
+        schema: 'open-design.deliverable-syntax-tool/v1', status: 'incomplete',
+        reason: 'process_tree_not_quiescent', source: 'run_finalizer', checkedAt: 123,
+        finalization: { action: 'fail', reason: 'check_incomplete' },
+      },
+    })).toMatchObject({ blockedBrokenDeliveryCount: 0, recoveredDeliveryCount: 0 });
   });
 });
 

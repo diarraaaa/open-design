@@ -17,10 +17,40 @@ export const DELIVERABLE_SYNTAX_SAFE_FIX_RULES = [
   'close_unterminated_block_comment',
   'close_unterminated_string',
   'close_unterminated_template',
+  'normalize_mismatched_string_quote',
+  'normalize_html_attribute_quotes',
 ] as const;
 
 export type DeliverableSyntaxSafeFixRule =
   typeof DELIVERABLE_SYNTAX_SAFE_FIX_RULES[number];
+
+export const DELIVERABLE_SYNTAX_FINALIZATION_REASONS = [
+  'attempt_limit_reached', 'commit_conflict', 'commit_failed',
+  'check_incomplete', 'no_progress', 'no_safe_fix', 'verification_failed',
+  'repair_budget_exceeded',
+] as const;
+export type DeliverableSyntaxFinalizationReason = typeof DELIVERABLE_SYNTAX_FINALIZATION_REASONS[number];
+export const DELIVERABLE_SYNTAX_SAFE_FIX_REFUSALS = [
+  'ambiguous_diagnostic', 'file_unreadable', 'path_outside_project',
+  'unsupported_syntax_error', 'multiple_files',
+] as const;
+export type DeliverableSyntaxSafeFixRefusal = typeof DELIVERABLE_SYNTAX_SAFE_FIX_REFUSALS[number];
+
+/** One Host finalizer invocation, separate from preceding Agent-tool history. */
+export interface DeliverableSyntaxFinalization {
+  action: 'allow' | 'fail';
+  reason?: DeliverableSyntaxFinalizationReason;
+  refusal?: DeliverableSyntaxSafeFixRefusal;
+  /** Missing fields in historical evidence are unknown, not zero or success. */
+  summaryVersion?: 1;
+  initialStatus?: 'pass' | 'repairable' | 'incomplete' | 'skipped';
+  repairEngine?: 'host-safe-fixer@2';
+  /** Accepted in-memory patches, including ones later discarded. */
+  stagedPatchCount?: number;
+  /** Published only after whole-candidate verification and atomic commit. */
+  committedPatchCount?: number;
+  committedRepairRules?: DeliverableSyntaxSafeFixRule[];
+}
 
 /**
  * Low-cardinality, content-free measurements accumulated across checker calls
@@ -34,20 +64,25 @@ export interface DeliverableSyntaxMetrics {
   repairableCheckCount: number;
   initialDiagnosticCount: number;
   latestDiagnosticCount: number;
-  /** Wall-clock instant when this Run first observed a repairable candidate. */
+  /** Start timestamp of this Run's first check that returned repairable. */
   firstRepairableAtMs?: number;
-  /** Wall-clock instant when the first later check passed. */
+  /** Start timestamp of the first later check that returned pass. */
   repairPassedAtMs?: number;
-  /** Time from the first repairable result to the first later passing result. */
+  /** Check-start to check-start window; excludes the final check and commit. */
   repairWindowDurationMs?: number;
-  /** Time from the first repairable result to the physical Run terminal. */
+  /** Legacy name: first repairable check start to any physical Run terminal, including failure. */
   repairToDeliveryDurationMs?: number;
+  /** Explicit alias of repairToDeliveryDurationMs, not proof of delivery success. */
+  repairToTerminalDurationMs?: number;
   /** Executor that performed the bounded repair, when one was attempted. */
   repairExecutor?: 'agent' | 'host_safe_fixer';
-  /** Time spent proposing, verifying, and committing deterministic patches. */
+  /** Accepted proposal work plus commit time; parser time is in checkerDurationMs. */
   repairDurationMs?: number;
-  /** Fixed-cardinality rules that produced at least one accepted patch. */
+  /** Legacy staged-rule list, not evidence of a committed patch. */
   appliedRepairRules?: DeliverableSyntaxSafeFixRule[];
+  /** Proposal evaluation includes refused candidates; not accepted-patch count. */
+  safeFixProposalCount?: number;
+  safeFixProposalDurationMs?: number;
 }
 
 export interface DeliverableSyntaxDiagnostic {
@@ -136,6 +171,8 @@ export type DeliverableSyntaxCanonicalReason = `canonical_${
 
 type DeliverableSyntaxToolEnvelope = {
   schema: typeof DELIVERABLE_SYNTAX_TOOL_SCHEMA;
+  /** Final host decision, distinct from the parser verdict and Run status. */
+  finalization?: DeliverableSyntaxFinalization;
 };
 
 /** Response returned by POST /api/tools/deliverable-syntax/check. */

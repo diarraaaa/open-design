@@ -17,11 +17,16 @@ import {
   type TrackingRunCancelOrigin,
   type TrackingRunTerminalTrigger,
 } from '@open-design/contracts/analytics';
-import type {
-  DeliverableSyntaxRepairState,
-  DeliverableSyntaxValidationEvidence,
-  OdNextRolloutDecision,
-  SafeRunQualityV1,
+import {
+  DELIVERABLE_SYNTAX_FINALIZATION_REASONS,
+  DELIVERABLE_SYNTAX_SAFE_FIX_REFUSALS,
+  DELIVERABLE_SYNTAX_SAFE_FIX_RULES,
+  type DeliverableSyntaxFinalization,
+  type DeliverableSyntaxSafeFixRule,
+  type DeliverableSyntaxRepairState,
+  type DeliverableSyntaxValidationEvidence,
+  type OdNextRolloutDecision,
+  type SafeRunQualityV1,
 } from '@open-design/contracts';
 
 import { agentCliEnvForAgent, readAppConfig, type TelemetryPrefs } from './app-config.js';
@@ -272,9 +277,31 @@ function nonNegativeFinite(value: unknown): number | undefined {
     : undefined;
 }
 
+function safeRepairRules(value: readonly DeliverableSyntaxSafeFixRule[]): DeliverableSyntaxSafeFixRule[] {
+  return [...new Set(value.filter((rule) => DELIVERABLE_SYNTAX_SAFE_FIX_RULES.includes(rule)))];
+}
+
+/** Never spread persisted objects into safe telemetry: no paths or diagnostic text. */
+function projectSyntaxFinalization(value: DeliverableSyntaxFinalization): DeliverableSyntaxFinalization | undefined {
+  if (value.action !== 'allow' && value.action !== 'fail') return undefined;
+  return {
+    action: value.action,
+    ...(value.reason && DELIVERABLE_SYNTAX_FINALIZATION_REASONS.includes(value.reason) ? { reason: value.reason } : {}),
+    ...(value.refusal && DELIVERABLE_SYNTAX_SAFE_FIX_REFUSALS.includes(value.refusal) ? { refusal: value.refusal } : {}),
+    ...(value.summaryVersion === 1 ? { summaryVersion: 1 } : {}),
+    ...(value.initialStatus && ['pass', 'repairable', 'incomplete', 'skipped'].includes(value.initialStatus)
+      ? { initialStatus: value.initialStatus } : {}),
+    ...(value.repairEngine === 'host-safe-fixer@2' ? { repairEngine: value.repairEngine } : {}),
+    ...(nonNegativeInteger(value.stagedPatchCount) !== undefined ? { stagedPatchCount: value.stagedPatchCount } : {}),
+    ...(nonNegativeInteger(value.committedPatchCount) !== undefined ? { committedPatchCount: value.committedPatchCount } : {}),
+    ...(Array.isArray(value.committedRepairRules) ? { committedRepairRules: safeRepairRules(value.committedRepairRules) } : {}),
+  };
+}
+
 /** Build the one safe syntax fact-sheet shared by evaluation and production telemetry. */
 export function projectDeliverableSyntaxTelemetry(
-  run: Pick<DaemonRunRecord, 'deliverableSyntaxRepair' | 'deliverableSyntaxValidation'>,
+  run: Pick<DaemonRunRecord, 'deliverableSyntaxRepair' | 'deliverableSyntaxValidation'>
+    & Partial<Pick<DaemonRunRecord, 'status'>>,
 ): DeliverableSyntaxTelemetry | undefined {
   const validation = run.deliverableSyntaxValidation;
   if (!validation) return undefined;
@@ -284,36 +311,74 @@ export function projectDeliverableSyntaxTelemetry(
     ? validation.repairState
     : undefined;
   const repairState = run.deliverableSyntaxRepair ?? embeddedRepairState;
-  const repairAttempts = nonNegativeInteger(repairState?.attempt)
+  const finalization = validation.finalization
+    ? projectSyntaxFinalization(validation.finalization) : undefined;
+  const versionedSummary = validation.finalization?.summaryVersion !== undefined;
+  const hostSummary = finalization?.summaryVersion === 1;
+  const stagedPatchCount = finalization?.stagedPatchCount;
+  const committedPatchCount = finalization?.committedPatchCount;
+  const originalCommittedRules = validation.finalization?.committedRepairRules;
+  // Version alone is not commit proof. Partial or contradictory historical
+  // objects remain unknown, never confirmed successful/no-repair deliveries.
+  const completeHostSummary = hostSummary
+    && finalization.repairEngine === 'host-safe-fixer@2'
+    && finalization.initialStatus !== undefined
+    && stagedPatchCount !== undefined && stagedPatchCount <= 8
+    && committedPatchCount !== undefined && committedPatchCount <= stagedPatchCount
+    && Array.isArray(originalCommittedRules)
+    && originalCommittedRules.length <= DELIVERABLE_SYNTAX_SAFE_FIX_RULES.length
+    && originalCommittedRules.every((rule) => DELIVERABLE_SYNTAX_SAFE_FIX_RULES.includes(rule))
+    && (committedPatchCount > 0 ? originalCommittedRules.length > 0 : originalCommittedRules.length === 0);
+  const terminalRunStatus = run.status === 'succeeded' || run.status === 'failed' || run.status === 'canceled'
+    ? run.status : undefined;
+  const repairAttempts = hostSummary
+    ? nonNegativeInteger(finalization.stagedPatchCount) ?? 0
+    : nonNegativeInteger(repairState?.attempt)
     ?? nonNegativeInteger(repairDirective?.attempt)
     ?? 0;
-  const maxRepairAttempts = nonNegativeInteger(repairState?.maxAttempts)
+  const maxRepairAttempts = hostSummary ? 8 : nonNegativeInteger(repairState?.maxAttempts)
     ?? nonNegativeInteger(repairDirective?.maxAttempts)
     ?? null;
   const metrics = validation.metrics;
   const diagnostics = 'diagnostics' in validation ? validation.diagnostics : undefined;
-  const repairTriggered = repairAttempts > 0
+  const repairTriggered = hostSummary ? finalization.initialStatus === 'repairable' : repairAttempts > 0
     || validation.status === 'repairable'
     || validation.status === 'exhausted'
     || (metrics?.repairableCheckCount ?? 0) > 0;
-  const exhausted = validation.status === 'exhausted'
+  const exhausted = hostSummary
+    ? finalization.reason === 'attempt_limit_reached'
+    : validation.status === 'exhausted'
     || (
       validation.status === 'repairable'
       && maxRepairAttempts !== null
       && repairAttempts >= maxRepairAttempts
     );
+  const hostEvidence = versionedSummary || validation.source === 'run_finalizer'
+    || metrics?.repairExecutor === 'host_safe_fixer' || repairState?.mode === 'host_safe_fixer';
+  const recoveredDelivery = hostSummary
+    ? completeHostSummary && finalization.initialStatus === 'repairable'
+      && (finalization.committedPatchCount ?? 0) > 0
+      && validation.status === 'pass' && finalization.action === 'allow'
+      && terminalRunStatus === 'succeeded'
+    : !hostEvidence && validation.status === 'pass' && repairTriggered
+      && finalization?.action !== 'fail' && terminalRunStatus === 'succeeded';
   const repairOutcome: DeliverableSyntaxTelemetry['repairOutcome'] =
     validation.status === 'skipped'
       ? 'not_applicable'
-      : validation.status === 'pass' && repairTriggered
+      : recoveredDelivery
         ? 'repaired'
-        : validation.status === 'pass'
+        : validation.status === 'pass' && !repairTriggered && finalization?.action !== 'fail'
+          && (!versionedSummary || completeHostSummary)
           ? 'not_needed'
           : exhausted
             ? 'exhausted'
             : 'unresolved';
   const checkedFiles = 'checkedFiles' in validation ? validation.checkedFiles : undefined;
   const fallbackDiagnosticCount = diagnostics?.length ?? null;
+  const observedSyntaxError = hostSummary
+    ? finalization.initialStatus === 'repairable' || validation.status === 'repairable'
+    : validation.status === 'repairable' || validation.status === 'exhausted'
+      || (metrics?.repairableCheckCount ?? 0) > 0;
 
   return {
     schemaVersion: 'deliverable-syntax-telemetry-v1',
@@ -331,19 +396,28 @@ export function projectDeliverableSyntaxTelemetry(
       nonNegativeFinite(metrics?.repairWindowDurationMs) ?? null,
     repairToDeliveryDurationMs:
       nonNegativeFinite(metrics?.repairToDeliveryDurationMs) ?? null,
-    ...(metrics?.repairExecutor || repairState?.mode
+    ...(metrics?.repairToTerminalDurationMs !== undefined || metrics?.repairToDeliveryDurationMs !== undefined
+      ? { repairToTerminalDurationMs: nonNegativeFinite(metrics?.repairToTerminalDurationMs)
+        ?? nonNegativeFinite(metrics?.repairToDeliveryDurationMs) ?? null } : {}),
+    ...(terminalRunStatus ? { terminalRunStatus } : {}),
+    ...(finalization ? { finalization } : {}),
+    ...(hostSummary || metrics?.repairExecutor || repairState?.mode
       ? {
           repairExecutor:
-            metrics?.repairExecutor
+            (hostSummary ? 'host_safe_fixer' : metrics?.repairExecutor)
             ?? (repairState?.mode === 'host_safe_fixer' ? 'host_safe_fixer' : 'agent'),
         }
       : {}),
     ...(metrics?.repairDurationMs !== undefined
       ? { repairDurationMs: nonNegativeFinite(metrics.repairDurationMs) ?? null }
       : {}),
-    ...(metrics?.appliedRepairRules
-      ? { appliedRepairRules: metrics.appliedRepairRules }
+    ...(Array.isArray(metrics?.appliedRepairRules)
+      ? { appliedRepairRules: safeRepairRules(metrics.appliedRepairRules) }
       : {}),
+    ...(nonNegativeInteger(metrics?.safeFixProposalCount) !== undefined
+      ? { safeFixProposalCount: metrics!.safeFixProposalCount } : {}),
+    ...(metrics?.safeFixProposalDurationMs !== undefined
+      ? { safeFixProposalDurationMs: nonNegativeFinite(metrics.safeFixProposalDurationMs) ?? null } : {}),
     repairableCheckCount: nonNegativeInteger(metrics?.repairableCheckCount)
       ?? (validation.status === 'repairable' || validation.status === 'exhausted' ? 1 : 0),
     initialDiagnosticCount: nonNegativeInteger(metrics?.initialDiagnosticCount)
@@ -358,8 +432,8 @@ export function projectDeliverableSyntaxTelemetry(
     repairAttempts,
     maxRepairAttempts,
     repairOutcome,
-    recoveredDeliveryCount: repairOutcome === 'repaired' ? 1 : 0,
-    blockedBrokenDeliveryCount: repairOutcome === 'exhausted' ? 1 : 0,
+    recoveredDeliveryCount: recoveredDelivery ? 1 : 0,
+    blockedBrokenDeliveryCount: finalization?.action === 'fail' && observedSyntaxError ? 1 : 0,
   };
 }
 

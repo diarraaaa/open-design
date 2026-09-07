@@ -115,14 +115,35 @@ describe('deliverable syntax safe fixer', () => {
     await expect(fs.readFile(path.join(root, 'app.js'), 'utf8')).resolves.toBe(source);
   });
 
-  it('declines delimiter repair when regex syntax makes grouping ambiguous', async () => {
+  it('recognizes regex tokens without counting their literal delimiters', async () => {
     const source = 'const pattern = /\\(/; function ready() {';
     const root = await fixture('app.js', source);
     const result = await repairable(root, 'app.js');
 
     await expect(proposeDeliverableSyntaxSafeFix({ projectRoot: root, result }))
-      .resolves.toEqual({ action: 'none', reason: 'unsupported_syntax_error' });
+      .resolves.toMatchObject({ action: 'proposed', patch: { content: `${source}}` } });
     await expect(fs.readFile(path.join(root, 'app.js'), 'utf8')).resolves.toBe(source);
+  });
+
+  it('does not reuse a script range for different staged HTML bytes', async () => {
+    const source = '<script>const a = \'ready";\nconst b = \'done";</script>';
+    const root = await fixture('index.html', source);
+    const first = await proposeDeliverableSyntaxSafeFix({
+      projectRoot: root, result: await repairable(root, 'index.html'),
+    });
+    if (first.action !== 'proposed') throw new Error('Expected first proposal');
+    const changed = `<!-- shifted script -->${first.patch.content}`;
+    const overrides = new Map([['index.html', changed]]);
+    const result = await checkDeliverableSyntax({ projectRoot: root, entryFile: 'index.html', contentOverrides: overrides });
+    if (result.status !== 'repairable') throw new Error('Expected second diagnostic');
+    const second = await proposeDeliverableSyntaxSafeFix({
+      projectRoot: root, result, contentOverrides: overrides, previousPatch: first.patch,
+    });
+    expect(second).toMatchObject({
+      action: 'proposed',
+      patch: { content: '<!-- shifted script --><script>const a = \'ready\';\nconst b = \'done\';</script>' },
+    });
+    await expect(fs.readFile(path.join(root, 'index.html'), 'utf8')).resolves.toBe(source);
   });
 
   it('refuses to overwrite a concurrent edit', async () => {
