@@ -2435,7 +2435,11 @@ function PluginPromptPresetCard({
   // to fit the preview cell (see useDeckPreviewScale), so a template's first
   // slide previews proportionally instead of overflowing. The baked-clip path
   // (preferBaked) is already proportional; this fixes the live-HTML fallback.
-  const odMode = (record.manifest?.od as { mode?: unknown } | undefined)?.mode;
+  const odManifest = record.manifest?.od as
+    | { mode?: unknown; scenario?: unknown }
+    | undefined;
+  const odMode = odManifest?.mode;
+  const odScenario = odManifest?.scenario;
   const presetPreviewRef = useRef<HTMLSpanElement>(null);
   useDeckPreviewScale(presetPreviewRef, odMode === 'deck' && preview.kind === 'html');
   const title = localizePluginTitle(locale, record);
@@ -2451,6 +2455,7 @@ function PluginPromptPresetCard({
         data-testid="home-hero-plugin-preset"
         data-plugin-id={record.id}
         {...(typeof odMode === 'string' ? { 'data-od-mode': odMode } : {})}
+        {...(typeof odScenario === 'string' ? { 'data-od-scenario': odScenario } : {})}
         disabled={disabled}
         onClick={() => onPick(record, chipId, seedPrompt)}
       >

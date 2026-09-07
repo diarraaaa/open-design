@@ -89,6 +89,29 @@ describe('recvpYDfW12NBu — example-prompt preset thumbnails read as mostly pad
   });
 });
 
+describe('PR #7678 — document preset thumbnails are horizontally off-center', () => {
+  it('centers the scaled HTML viewport crop for document scenarios only', () => {
+    const genericIframe = cssDeclarations(
+      homeHeroCss,
+      '.home-hero__plugin-preset-preview .plugins-home__html-iframe',
+    );
+    const documentIframe = cssDeclarations(
+      homeHeroCss,
+      '.home-hero__plugin-preset[data-od-scenario="documents"] .plugins-home__html-iframe',
+    );
+
+    expect(ruleValue(genericIframe, '--home-html-preview-scale')).toBe('0.134');
+    expect(ruleValue(genericIframe, 'transform')).toBe(
+      'scale(var(--home-html-preview-scale))',
+    );
+    expect(ruleValue(documentIframe, 'left')).toBe('50%');
+    expect(ruleValue(documentIframe, 'transform')).toBe(
+      'translateX(-50%) scale(var(--home-html-preview-scale))',
+    );
+    expect(ruleValue(documentIframe, 'transform-origin')).toBe('top center');
+  });
+});
+
 describe('recvpYEHCwtxXX — selected recent-project checkbox degrades to outline on hover', () => {
   it('re-asserts the filled accent state at matching specificity on hover', () => {
     // The base selected style.
