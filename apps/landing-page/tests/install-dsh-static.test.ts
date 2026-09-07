@@ -18,6 +18,24 @@ const posixInstaller = join(repoRoot, 'apps/landing-page/public/install-dsh.sh')
 const powershellInstaller = join(repoRoot, 'apps/landing-page/public/install-dsh.ps1');
 const cmdInstaller = join(repoRoot, 'apps/landing-page/public/install-dsh.cmd');
 
+/**
+ * The DeepSeek Harness version the published installers must pin.
+ *
+ * Spelled out here rather than read back from `install-dsh.sh`, because the
+ * assertions below exist to state that expectation independently — a check that
+ * read the version out of the script and compared it to itself would pass
+ * whatever version shipped.
+ *
+ * Everything else in this file derives from this constant: the fake `dsh` the
+ * toolchain fixtures install, the banner the installer prints, and the
+ * `--version` readbacks. That is deliberate. When the pin moved to `0.1.2-rc.1`
+ * the fixtures stayed on the old version and reported it back to the
+ * installer's own verification step, so the whole file went red for a reason
+ * that had nothing to do with the installer being wrong. A bump is now one
+ * edit, and the fixtures cannot fall behind the pin again.
+ */
+const EXPECTED_DSH_VERSION = '0.1.2-rc.1';
+
 test('publishes pinned cross-platform DeepSeek Harness installers', () => {
   const shell = readFileSync(posixInstaller, 'utf8');
   const powershell = readFileSync(powershellInstaller, 'utf8');
@@ -25,14 +43,14 @@ test('publishes pinned cross-platform DeepSeek Harness installers', () => {
 
   assert.match(shell, /^#!\/usr\/bin\/env sh\n/);
   assert.match(shell, /NODE_VERSION=['"]?24\.19\.0/);
-  assert.match(shell, /DSH_VERSION=['"]?0\.1\.1-rc\.2/);
+  assert.equal(/DSH_VERSION='([^']+)'/u.exec(shell)?.[1], EXPECTED_DSH_VERSION);
   assert.match(shell, /PNPM_VERSION=['"]?11\.7\.0/);
   assert.match(shell, /SHASUMS256\.txt/);
   assert.match(shell, /--no-launch/);
   assert.doesNotMatch(shell, /npm\s+(?:install|i)\s+-g/);
 
   assert.match(powershell, /NodeVersion\s*=\s*'24\.19\.0'/);
-  assert.match(powershell, /DshVersion\s*=\s*'0\.1\.1-rc\.2'/);
+  assert.equal(/\$DshVersion\s*=\s*'([^']+)'/u.exec(powershell)?.[1], EXPECTED_DSH_VERSION);
   assert.match(powershell, /PnpmVersion\s*=\s*'11\.7\.0'/);
   assert.match(powershell, /Get-FileHash/);
   assert.match(powershell, /NoLaunch/);
@@ -110,7 +128,7 @@ mkdir -p "$prefix/node_modules/@deepseek-ai/dsh/lib" "$prefix/node_modules/.bin"
 : > "$prefix/node_modules/@deepseek-ai/dsh/lib/bin.js"
 cat > "$prefix/node_modules/.bin/dsh" <<'EOF'
 #!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\\n' '0.1.1-rc.2'; exit 0; fi
+if [ "$1" = "--version" ]; then printf '%s\\n' '${EXPECTED_DSH_VERSION}'; exit 0; fi
 if [ "$1" = "plugin" ]; then pnpm --version; exit $?; fi
 printf '%s\\n' "dsh:$*"
 EOF
@@ -151,11 +169,14 @@ printf '%s\\n' '10.33.2'
   try {
     const first = spawnSync('sh', [posixInstaller, '--no-launch'], { encoding: 'utf8', env });
     assert.equal(first.status, 0, first.stderr);
-    assert.match(first.stdout, /DeepSeek Harness 0\.1\.1-rc\.2 is ready/);
+    assert.ok(
+      first.stdout.includes(`DeepSeek Harness ${EXPECTED_DSH_VERSION} is ready`),
+      first.stdout,
+    );
 
     const version = spawnSync(join(binDir, 'dsh'), ['--version'], { encoding: 'utf8', env });
     assert.equal(version.status, 0, version.stderr);
-    assert.equal(version.stdout.trim(), '0.1.1-rc.2');
+    assert.equal(version.stdout.trim(), EXPECTED_DSH_VERSION);
 
     const pluginPnpm = spawnSync(join(binDir, 'dsh'), ['plugin'], { encoding: 'utf8', env });
     assert.equal(pluginPnpm.status, 0, pluginPnpm.stderr);
@@ -178,7 +199,7 @@ test('POSIX installer reuses a complete compatible toolchain without downloading
   mkdirSync(pathDir, { recursive: true });
   for (const [name, version] of [
     ['node', 'v24.19.0'],
-    ['dsh', '0.1.1-rc.2'],
+    ['dsh', EXPECTED_DSH_VERSION],
     ['pnpm', '11.7.0'],
   ] as const) {
     const executable = join(pathDir, name);
@@ -201,7 +222,7 @@ test('POSIX installer reuses a complete compatible toolchain without downloading
     assert.doesNotMatch(result.stdout + result.stderr, /Downloading/);
     const version = spawnSync(join(binDir, 'dsh'), ['--version'], { encoding: 'utf8', env });
     assert.equal(version.status, 0, version.stderr);
-    assert.equal(version.stdout.trim(), '0.1.1-rc.2');
+    assert.equal(version.stdout.trim(), EXPECTED_DSH_VERSION);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
