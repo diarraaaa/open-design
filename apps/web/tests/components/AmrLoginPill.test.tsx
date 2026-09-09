@@ -420,10 +420,11 @@ describe('AmrLoginPill', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeTruthy();
     });
-    expect(screen.getByRole('alert').textContent).toBe(
-      'profile "prod" api URL: is not configured',
-    );
-    expect(screen.queryByText('Sign-in failed.')).toBeNull();
+    // The daemon's raw error (an infra detail, e.g. a missing binary or an
+    // unconfigured provider) is logged for operators but never shown
+    // verbatim to a signed-out user — only the generic compact message.
+    expect(screen.getByRole('alert').textContent).toBe('Sign-in failed.');
+    expect(screen.queryByText('profile "prod" api URL: is not configured')).toBeNull();
     expect(screen.queryByText('Signing in…')).toBeNull();
   });
 

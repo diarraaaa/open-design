@@ -1152,22 +1152,25 @@ describe('InlineModelSwitcher AMR row', () => {
     });
     fireEvent.click(amrButton);
 
+    // The daemon's raw error (an infra detail, e.g. a missing binary or an
+    // unconfigured provider) is logged for operators but never shown
+    // verbatim to a signed-out user — only the generic compact message.
     await waitFor(() => {
       expect(
         within(popover).getByRole('radio', {
-          name: /^OpenDesign\s+profile "prod" api URL: is not configured/i,
+          name: /^OpenDesign\s+Sign-in failed\./i,
         }),
       ).toBeTruthy();
     });
     expect(
       within(popover).queryByRole('radio', {
-        name: /^OpenDesign\s+Sign-in failed\./i,
+        name: /api URL: is not configured/i,
       }),
     ).toBeNull();
     expect(
       popover.querySelector('.inline-switcher__account-status.is-error')
         ?.textContent,
-    ).toMatch(/api URL: is not configured/i);
+    ).toMatch(/Sign-in failed\./i);
   });
 
   it('cancels a timed-out AMR sign-in from the inline switcher', async () => {

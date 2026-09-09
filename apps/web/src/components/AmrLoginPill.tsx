@@ -599,11 +599,14 @@ export function AmrLoginPill({
         resolveAmrAuthTracking(analytics.track, 'failed', 'spawn_failed', {
           authAttemptId,
         });
+        // Log the raw daemon detail (e.g. "vela binary not found") for
+        // operators, but never surface it verbatim: it's an infra message,
+        // not something a signed-out user can act on.
         console.error('[amr-login] startVelaLogin failed', result);
         loginStartedAtRef.current = null;
         loginPendingRef.current = false;
         setPending(null);
-        setErrorMessage(result.error || t('settings.amrLoginErrorCompact'));
+        setErrorMessage(t('settings.amrLoginErrorCompact'));
         return;
       }
       // Dispatch only — do not ALSO call `startPolling(startedAt)` directly

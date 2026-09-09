@@ -1760,10 +1760,13 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
 
     await clickCloudSignIn();
 
+    // The daemon's raw error (an infra detail, e.g. a missing binary or an
+    // unconfigured provider) is logged for operators but never shown
+    // verbatim to a signed-out user — only the generic compact message.
     await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toBe(startupError);
+      expect(screen.getByRole('alert').textContent).toBe('Sign-in failed.');
     });
-    expect(screen.queryByText('Sign-in failed.')).toBeNull();
+    expect(screen.queryByText(startupError)).toBeNull();
     expect(screen.queryByText('Signing in…')).toBeNull();
   });
 
