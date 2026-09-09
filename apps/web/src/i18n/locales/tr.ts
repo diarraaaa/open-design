@@ -510,7 +510,6 @@ export const tr: Dict = {
   'settings.amrActivationOpen': 'Oturum açma sayfasını aç',
   'settings.amrCancelSignIn': 'Oturum açmayı iptal et',
   'settings.amrAccountStatus': 'OpenDesign Cloud hesap durumu',
-  'settings.amrConsole': 'Yönet',
   'settings.amrBalance': 'Kota',
   'settings.amrPlan': 'Plan',
   'settings.amrUpgrade': 'Yükselt',

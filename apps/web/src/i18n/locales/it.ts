@@ -510,7 +510,6 @@ export const it: Dict = {
   'settings.amrActivationOpen': 'Apri la pagina di accesso',
   'settings.amrCancelSignIn': 'Annulla accesso',
   'settings.amrAccountStatus': 'Stato account OpenDesign Cloud',
-  'settings.amrConsole': 'Gestisci',
   'settings.amrBalance': 'Quota',
   'settings.amrPlan': 'Piano',
   'settings.amrUpgrade': 'Esegui upgrade',

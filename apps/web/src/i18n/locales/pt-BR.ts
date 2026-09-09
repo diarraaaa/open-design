@@ -510,7 +510,6 @@ export const ptBR: Dict = {
   'settings.amrActivationOpen': 'Abrir página de login',
   'settings.amrCancelSignIn': 'Cancelar login',
   'settings.amrAccountStatus': 'Status da conta OpenDesign Cloud',
-  'settings.amrConsole': 'Gerenciar',
   'settings.amrBalance': 'Cota',
   'settings.amrPlan': 'Plano',
   'settings.amrUpgrade': 'Fazer upgrade',

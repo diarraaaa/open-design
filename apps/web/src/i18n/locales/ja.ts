@@ -510,7 +510,6 @@ export const ja: Dict = {
   'settings.amrActivationOpen': 'サインインページを開く',
   'settings.amrCancelSignIn': 'サインインをキャンセル',
   'settings.amrAccountStatus': 'OpenDesign Cloud アカウントの状態',
-  'settings.amrConsole': '管理',
   'settings.amrBalance': '利用枠',
   'settings.amrPlan': 'プラン',
   'settings.amrUpgrade': 'アップグレード',

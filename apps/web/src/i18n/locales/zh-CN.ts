@@ -508,7 +508,6 @@ export const zhCN: Dict = {
   "settings.amrActivationOpen": "打开登录页",
   "settings.amrCancelSignIn": "取消登录",
   "settings.amrAccountStatus": "OpenDesign Cloud 账户状态",
-  "settings.amrConsole": "OpenDesign Cloud 管理",
   "settings.amrLoginErrorCompact": "OpenDesign Cloud 登录失败。",
   "settings.advanced": "高级设置",
   "settings.amrLogin": "登录",

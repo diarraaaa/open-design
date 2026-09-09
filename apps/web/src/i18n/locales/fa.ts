@@ -510,7 +510,6 @@ export const fa: Dict = {
   'settings.amrActivationOpen': 'باز کردن صفحهٔ ورود',
   'settings.amrCancelSignIn': 'لغو ورود',
   'settings.amrAccountStatus': 'وضعیت حساب OpenDesign Cloud',
-  'settings.amrConsole': 'مدیریت',
   'settings.amrBalance': 'سهمیه',
   'settings.amrPlan': 'طرح',
   'settings.amrUpgrade': 'ارتقا',

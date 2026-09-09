@@ -267,148 +267,6 @@ describe('AmrLoginPill', () => {
     expect(screen.queryByText('LOCAL')).toBeNull();
   });
 
-  it('uses the test-profile AMR management URL for signed-in users', () => {
-    renderAccountControl({
-      status: 'signed-in',
-      email: 'leaf@example.com',
-      profile: 'test',
-      showProfileBadge: true,
-      showConsoleAction: true,
-    });
-
-    expect(screen.getByText('leaf@example.com')).toBeTruthy();
-    expect(screen.getByText('TEST')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe(
-      'https://vela.powerformer.net/dashboard?source=open_design',
-    );
-  });
-
-  it('uses the local-profile AMR management URL for signed-in users', () => {
-    renderAccountControl({
-      status: 'signed-in',
-      email: 'leaf@example.com',
-      profile: 'local',
-      showProfileBadge: true,
-      showConsoleAction: true,
-    });
-
-    expect(screen.getByText('LOCAL')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe(
-      'http://localhost:5173/dashboard?source=open_design',
-    );
-  });
-
-  it('uses the production AMR management URL by default', () => {
-    renderAccountControl({
-      status: 'signed-in',
-      email: 'leaf@example.com',
-      profile: 'prod',
-      showProfileBadge: true,
-      showConsoleAction: true,
-    });
-
-    expect(screen.queryByText('PROD')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe(
-      'https://open-design.ai/amr/dashboard?source=open_design',
-    );
-  });
-
-  it('bridges the attributed management URL even though its click stops propagation', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url === '/api/attribution/bridge-url') {
-        return jsonResponse({ body: { url: 'https://open-design.ai/amr/dashboard?od_bridge=odbr_12345678' } });
-      }
-      if (url === '/api/system/open-external') return jsonResponse({ body: { ok: true } });
-      return new Response('{}', { status: 202 });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(
-      <I18nProvider initial="en">
-        <AmrLoginPill
-          initialStatus={{
-            loggedIn: true,
-            loginInFlight: false,
-            profile: 'prod',
-            configPath: '/x',
-            user: { id: 'u', email: 'leaf@example.com', plan: 'free' },
-          }}
-          skipInitialRefresh
-          showConsoleAction
-          metricsConsent
-          installationId="od-install-abc"
-        />
-      </I18nProvider>,
-    );
-
-    const link = screen.getByRole('link', { name: 'Manage' }) as HTMLAnchorElement;
-    fireEvent.click(link);
-
-    const url = new URL(link.href);
-    expect(url.searchParams.get('source')).toBe('open_design');
-    expect(url.searchParams.get('od_origin')).toBe('open_design');
-    expect(url.searchParams.get('od_entry_source')).toBe('settings_amr_console');
-    expect(url.searchParams.get('od_device_id')).toBe('od-install-abc');
-    expect(url.searchParams.get('od_entry_id')).toMatch(/^od-amr-/u);
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/integrations/vela/analytics-entry',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/attribution/bridge-url',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('od_device_id=od-install-abc'),
-      }),
-    ));
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/system/open-external',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ url: 'https://open-design.ai/amr/dashboard?od_bridge=odbr_12345678' }),
-      }),
-    );
-  });
-
-  it('uses the feature-test origin carried by the visible status for management', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url === '/api/system/open-external') return jsonResponse({ body: { ok: true } });
-      return new Response('{}', { status: 202 });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    renderPill({
-      initialStatus: {
-        loggedIn: true,
-        loginInFlight: false,
-        profile: 'feature-test',
-        consoleOrigin: 'https://feature.example',
-        configPath: '/x',
-        user: { id: 'u', email: 'leaf@example.com', plan: 'plus' },
-      },
-      skipInitialRefresh: true,
-      showConsoleAction: true,
-    });
-
-    const link = screen.getByRole('link', { name: 'Manage' }) as HTMLAnchorElement;
-    expect(link.href).toBe('https://feature.example/dashboard?source=open_design');
-    fireEvent.click(link);
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/system/open-external',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('https://feature.example/dashboard'),
-      }),
-    ));
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/api/attribution/bridge-url',
-      expect.anything(),
-    );
-  });
-
   it('renders a "Signed in" pill (with the Sign-out aria-label) when /status reports a logged-in user', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
@@ -562,10 +420,11 @@ describe('AmrLoginPill', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeTruthy();
     });
-    expect(screen.getByRole('alert').textContent).toBe(
-      'profile "prod" api URL: is not configured',
-    );
-    expect(screen.queryByText('Sign-in failed.')).toBeNull();
+    // The daemon's raw error (an infra detail, e.g. a missing binary or an
+    // unconfigured provider) is logged for operators but never shown
+    // verbatim to a signed-out user — only the generic compact message.
+    expect(screen.getByRole('alert').textContent).toBe('Sign-in failed.');
+    expect(screen.queryByText('profile "prod" api URL: is not configured')).toBeNull();
     expect(screen.queryByText('Signing in…')).toBeNull();
   });
 

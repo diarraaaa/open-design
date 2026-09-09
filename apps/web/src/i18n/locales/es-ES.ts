@@ -510,7 +510,6 @@ export const esES: Dict = {
   'settings.amrActivationOpen': 'Abrir página de inicio de sesión',
   'settings.amrCancelSignIn': 'Cancelar inicio de sesión',
   'settings.amrAccountStatus': 'Estado de la cuenta OpenDesign Cloud',
-  'settings.amrConsole': 'Gestionar',
   'settings.amrBalance': 'Cuota',
   'settings.amrPlan': 'Plan',
   'settings.amrUpgrade': 'Mejorar',

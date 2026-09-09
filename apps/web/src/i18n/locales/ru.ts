@@ -510,7 +510,6 @@ export const ru: Dict = {
   'settings.amrActivationOpen': 'Открыть страницу входа',
   'settings.amrCancelSignIn': 'Отменить вход',
   'settings.amrAccountStatus': 'Статус аккаунта OpenDesign Cloud',
-  'settings.amrConsole': 'Управлять',
   'settings.amrBalance': 'Лимит',
   'settings.amrPlan': 'Тариф',
   'settings.amrUpgrade': 'Улучшить',

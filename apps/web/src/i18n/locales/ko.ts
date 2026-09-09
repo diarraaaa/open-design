@@ -510,7 +510,6 @@ export const ko: Dict = {
   'settings.amrActivationOpen': '로그인 페이지 열기',
   'settings.amrCancelSignIn': '로그인 취소',
   'settings.amrAccountStatus': 'OpenDesign Cloud 계정 상태',
-  'settings.amrConsole': '관리',
   'settings.amrBalance': '사용 한도',
   'settings.amrPlan': '플랜',
   'settings.amrUpgrade': '업그레이드',
