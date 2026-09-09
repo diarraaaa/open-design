@@ -112,14 +112,18 @@ COPY --from=build --chown=open-design:open-design /app/assets/community-pets ./a
 # via the same registry path third-party plugins use.
 COPY --from=build --chown=open-design:open-design /app/plugins/_official ./plugins/_official
 
-RUN mkdir -p /app/.od && \
-    chown -R open-design:open-design /app
+RUN mkdir -p /app/.od /home/open-design && \
+    chown -R open-design:open-design /app /home/open-design
 COPY --chmod=755 deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 ENV NODE_ENV=production
 ENV NODE_OPTIONS=--max-old-space-size=192
 ENV OD_BIND_HOST=0.0.0.0
 ENV OD_PORT=7456
+# adduser -H (above) skips creating a home directory; opencode-ai (spawned by
+# BYOK runs) writes its cache/config to $HOME regardless, so it needs one that
+# actually exists and is owned by the unprivileged user.
+ENV HOME=/home/open-design
 
 EXPOSE 7456
 
