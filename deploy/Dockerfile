@@ -85,7 +85,7 @@ COPY plugins/_official ./plugins/_official
 
 FROM ${RUNTIME_IMAGE}
 
-RUN apk add --no-cache tini poppler-utils bash git && \
+RUN apk add --no-cache tini poppler-utils bash git su-exec && \
     addgroup -S -g 1001 open-design && \
     adduser -S -D -H -u 1001 -G open-design open-design
 
@@ -108,6 +108,7 @@ COPY --from=build --chown=open-design:open-design /app/plugins/_official ./plugi
 
 RUN mkdir -p /app/.od && \
     chown -R open-design:open-design /app
+COPY --chmod=755 deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 ENV NODE_ENV=production
 ENV NODE_OPTIONS=--max-old-space-size=192
@@ -116,6 +117,8 @@ ENV OD_PORT=7456
 
 EXPOSE 7456
 
-USER open-design
-ENTRYPOINT ["/sbin/tini", "--"]
+# Stays root here: the entrypoint fixes /app/.od ownership on a freshly
+# mounted volume before dropping to the unprivileged open-design user via
+# su-exec (see docker-entrypoint.sh).
+ENTRYPOINT ["/sbin/tini", "--", "/app/docker-entrypoint.sh"]
 CMD ["node", "apps/daemon/dist/cli.js", "--no-open"]
