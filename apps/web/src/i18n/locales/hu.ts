@@ -510,7 +510,6 @@ export const hu: Dict = {
   'settings.amrActivationOpen': 'Bejelentkezési oldal megnyitása',
   'settings.amrCancelSignIn': 'Bejelentkezés megszakítása',
   'settings.amrAccountStatus': 'OpenDesign Cloud fiók állapota',
-  'settings.amrConsole': 'Kezelés',
   'settings.amrBalance': 'Keret',
   'settings.amrPlan': 'Csomag',
   'settings.amrUpgrade': 'Frissítés',

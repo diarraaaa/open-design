@@ -510,7 +510,6 @@ export const th: Dict = {
   'settings.amrActivationOpen': 'เปิดหน้าเข้าสู่ระบบ',
   'settings.amrCancelSignIn': 'ยกเลิกการลงชื่อเข้าใช้',
   'settings.amrAccountStatus': 'สถานะบัญชี OpenDesign Cloud',
-  'settings.amrConsole': 'จัดการ',
   'settings.amrBalance': 'โควตา',
   'settings.amrPlan': 'แพ็กเกจ',
   'settings.amrUpgrade': 'อัปเกรด',

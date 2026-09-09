@@ -458,7 +458,6 @@ export interface Dict {
   'settings.amrActivationOpen': string;
   'settings.amrCancelSignIn': string;
   'settings.amrAccountStatus': string;
-  'settings.amrConsole': string;
   'settings.amrBalance': string;
   'settings.amrPlan': string;
   'settings.amrUpgrade': string;

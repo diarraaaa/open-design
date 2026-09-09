@@ -510,7 +510,6 @@ export const id: Dict = {
   'settings.amrActivationOpen': 'Buka halaman masuk',
   'settings.amrCancelSignIn': 'Batalkan proses masuk',
   'settings.amrAccountStatus': 'Status akun OpenDesign Cloud',
-  'settings.amrConsole': 'Kelola',
   'settings.amrBalance': 'Kuota',
   'settings.amrPlan': 'Paket',
   'settings.amrUpgrade': 'Tingkatkan',

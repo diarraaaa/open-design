@@ -6,11 +6,9 @@ import {
   velaLogout,
   type VelaLoginStatus,
 } from '../providers/daemon';
-import { openExternalUrl } from '../providers/registry';
 import { useAnalytics } from '../analytics/provider';
 import {
   amrHandoffDeviceId,
-  attributedAmrUrl,
   recordAmrEntry,
   type TrackingAmrEntrySource,
 } from '../analytics/amr-attribution';
@@ -39,7 +37,7 @@ import {
 } from '../collab/useWorkspaceContext';
 import { Icon, type IconName } from './Icon';
 import { SignOutConfirmDialog } from './SignOutConfirmDialog';
-import { amrConsoleUrlForProfile, amrProfileBadgeLabel } from '../runtime/amr-guidance';
+import { amrProfileBadgeLabel } from '../runtime/amr-guidance';
 
 interface AmrLoginPillProps {
   className?: string;
@@ -54,7 +52,6 @@ interface AmrLoginPillProps {
   installationId?: string | null;
   showActivationDetails?: boolean;
   revealPendingCancelAction?: boolean;
-  showConsoleAction?: boolean;
   iconOnlySignOut?: boolean;
   onSignInStarted?: () => void;
   onStatusChange?: (status: VelaLoginStatus | null) => void;
@@ -87,8 +84,6 @@ export interface AmrAccountControlProps {
   hideSignedInStatus?: boolean;
   signInLabel?: string;
   signInIcon?: IconName;
-  showConsoleAction?: boolean;
-  consoleUrl?: string;
   iconOnlySignOut?: boolean;
   showCancelSignInAction?: boolean;
   // Activation URL surfaced while signing in, so the user can re-open the
@@ -100,7 +95,6 @@ export interface AmrAccountControlProps {
   onSignIn?: (event: MouseEvent<HTMLButtonElement>) => void;
   onSignOut?: (event: MouseEvent<HTMLButtonElement>) => void;
   onCancelSignIn?: (event: MouseEvent<HTMLButtonElement>) => void;
-  onConsoleClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   signInDisabled?: boolean;
   signOutDisabled?: boolean;
   cancelSignInDisabled?: boolean;
@@ -136,8 +130,6 @@ export function AmrAccountControl({
   hideSignedInStatus = false,
   signInLabel,
   signInIcon,
-  showConsoleAction = false,
-  consoleUrl,
   iconOnlySignOut = false,
   showCancelSignInAction = false,
   activationUrl,
@@ -145,7 +137,6 @@ export function AmrAccountControl({
   onSignIn,
   onSignOut,
   onCancelSignIn,
-  onConsoleClick,
   signInDisabled = false,
   signOutDisabled = false,
   cancelSignInDisabled = false,
@@ -157,7 +148,6 @@ export function AmrAccountControl({
   const hasError = status === 'error';
   const badgeLabel = showProfileBadge ? amrProfileBadgeLabel(profile) : null;
   const visibleBadgeLabel = isSignedIn ? badgeLabel : null;
-  const resolvedConsoleUrl = consoleUrl ?? amrConsoleUrlForProfile(profile);
   const loginErrorText = errorMessage || t('settings.amrLoginErrorCompact');
   const statusText = isSignedIn
     ? hideSignedInStatus
@@ -193,18 +183,6 @@ export function AmrAccountControl({
             <span className="amr-login-pill-badge">{visibleBadgeLabel}</span>
           ) : null}
         </span>
-      ) : null}
-      {isSignedIn && showConsoleAction ? (
-        <a
-          className="amr-account-control__action"
-          href={resolvedConsoleUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={t('settings.amrConsole')}
-          onClick={onConsoleClick}
-        >
-          {t('settings.amrConsole')}
-        </a>
       ) : null}
       {isSignedIn && onSignOut ? (
         <button
@@ -294,7 +272,6 @@ export function AmrLoginPill({
   installationId,
   showActivationDetails = false,
   revealPendingCancelAction = false,
-  showConsoleAction = false,
   iconOnlySignOut = false,
   onSignInStarted,
   onStatusChange,
@@ -746,41 +723,6 @@ export function AmrLoginPill({
     await onSignedOut?.();
   }, [onSignedOut, refresh, t]);
 
-  // Keep the management link on the same status snapshot that supplies the
-  // visible profile badge and account data. The module-level runtime origin is
-  // only a compatibility fallback; it can be reset by a dev hot reload while
-  // React retains the feature-test status shown on this card.
-  const statusConsoleUrl = amrConsoleUrlForProfile(
-    status?.profile,
-    status?.consoleOrigin,
-  );
-
-  const handleConsoleClick = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
-      event.stopPropagation();
-      event.preventDefault();
-      const attribution = recordAmrEntry(analytics.track, 'settings_amr_console', new Date(), {
-        metricsConsent,
-      });
-      const deviceId = amrHandoffDeviceId({
-        metricsConsent,
-        resolvedDeviceId: getResolvedDeviceId(),
-        installationId,
-      });
-      const url = attributedAmrUrl(
-        statusConsoleUrl,
-        attribution,
-        deviceId,
-      );
-      event.currentTarget.href = url;
-      // This link deliberately stops propagation to avoid re-selecting its
-      // agent card, so App's document-level first-party bridge cannot see it.
-      // Open the final, attributed URL directly to mint the browser bridge.
-      void openExternalUrl(url);
-    },
-    [analytics.track, installationId, metricsConsent, statusConsoleUrl],
-  );
-
   const loggedIn = isAmrSessionAuthenticated(status);
   const userEmail = status?.user?.email ?? '';
   const loginInFlight =
@@ -818,8 +760,6 @@ export function AmrLoginPill({
         hideSignedInStatus={hideSignedInStatus}
         signInLabel={signInLabel}
         signInIcon={signInIcon}
-        showConsoleAction={showConsoleAction}
-        consoleUrl={statusConsoleUrl}
         iconOnlySignOut={iconOnlySignOut}
         signInDisabled={loginInFlight}
         signOutDisabled={logoutInFlight}
@@ -830,7 +770,6 @@ export function AmrLoginPill({
         onSignIn={handleLogin}
         onSignOut={handleLogout}
         onCancelSignIn={handleCancelLogin}
-        onConsoleClick={showConsoleAction ? handleConsoleClick : undefined}
         className={loggedIn ? 'amr-login-pill-status' : undefined}
       />
       {confirmingLogout ? (
