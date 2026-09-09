@@ -114,6 +114,7 @@ import {
   isAmrSessionAuthenticated,
 } from './components/amrLoginPolling';
 import { CollabDemoView } from './collab/CollabDemoView';
+import { BrandWatermark } from './components/BrandWatermark';
 import {
   WorkspaceMemberDirectoryPreloader,
 } from './collab/WorkspaceMemberDirectoryPreloader';
@@ -848,6 +849,7 @@ export function App() {
       <IframeKeepAliveProvider>
         <WorkspaceMemberDirectoryPreloader />
         <AppInner />
+        <BrandWatermark />
       </IframeKeepAliveProvider>
     </MotionConfig>
   );
