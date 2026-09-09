@@ -1033,23 +1033,6 @@ export function EntryTopRightCluster({
       {createPortal(
         <div className={clusterVisible ? 'entry-top-right-cluster' : undefined}>
           {leadingSlot}
-          {/* GitHub star chip: its own option in the cluster, right after the
-              campaign badge (per product) — it used to live in the account
-              menu's social row. */}
-          {clusterVisible ? (
-            <a
-              className="entry-top-right-github"
-              href={REPO_URL}
-              {...externalLinkProps}
-              aria-label={`GitHub · ${githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)} stars`}
-              title={`GitHub · ${githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)} stars`}
-              data-testid="entry-top-right-github"
-              onClick={() => trackAccountAction('github')}
-            >
-              <Icon name="github-filled" size={14} />
-              <span>{githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)}</span>
-            </a>
-          ) : null}
           {/* One shared capsule for the account module (per product: 头像和积分
               合并成一个胶囊): credits segment on the left (same availability
               rule as the menu's billing card; clicking jumps to B's billing
