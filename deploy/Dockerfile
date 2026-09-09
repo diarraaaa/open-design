@@ -85,9 +85,15 @@ COPY plugins/_official ./plugins/_official
 
 FROM ${RUNTIME_IMAGE}
 
+# opencode-ai (MIT, open source) is the execution engine BYOK chat/tool runs
+# actually spawn — see apps/daemon/src/runtimes/defs/byok-opencode.ts. Without
+# it BYOK can validate a connection but every real run fails with "BYOK API
+# runs require OpenCode".
 RUN apk add --no-cache tini poppler-utils bash git su-exec && \
     addgroup -S -g 1001 open-design && \
-    adduser -S -D -H -u 1001 -G open-design open-design
+    adduser -S -D -H -u 1001 -G open-design open-design && \
+    npm install -g opencode-ai && \
+    npm cache clean --force
 
 WORKDIR /app
 COPY --from=build --chown=open-design:open-design /app/deploy/daemon ./apps/daemon
